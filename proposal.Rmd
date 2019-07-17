@@ -1,0 +1,275 @@
+---
+title: "Project Proposal"
+date: '2019-07-16'
+author:
+- James Banasiak jamesmb3@illinois.edu
+- Ryan Epp ryanepp2@illinois.edu
+- Nana Tark ytark2@illinois.edu
+version: 0.0.3
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+urlcolor: cyan
+---
+
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+# bootstrap our environment - download data - setup
+# this will create a STAT420_PROJECT_DATA folder in your HOME_DIR on unix/mac or in "Documents" on windows, download data, extract files
+BASE_PATH <- "~/git/STAT420/final-project"
+#BASE_PATH <- "~"
+DATA_DIR <- "data"
+DATA_FILENAME <- 'advanced-regression-techniques.zip'
+
+if(getwd()==DATA_DIR){
+  setwd(BASE_PATH)
+}
+
+# create data dir if not exist
+if(!dir.exists(file.path(BASE_PATH,DATA_DIR))){
+  dir.create(file.path(BASE_PATH,DATA_DIR))
+} 
+# download data from a url if not exists
+destfilename<-file.path(BASE_PATH,DATA_DIR,DATA_FILENAME)
+url<-'https://storage.googleapis.com/kaggle-competitions-data/kaggle/5407/205873/all.zip?GoogleAccessId=web-data@kaggle-161607.iam.gserviceaccount.com&Expires=1563514423&Signature=D52AtYvPZHZ5QxHzdJbHk4qzBTQyDE%2F6NAgBDREC4dNlN15weHf3Pm7D8kYFdTWg5PQvMW9KJGciRrqxloqFsU5a%2Fa%2BxXAK7Kf6L7YtYPg7Ta2UZenOl4CNvxjH1mTAdlTyuDmcxXPxS%2B40nJwrnIzVbnzBIWZ3xsEacOGq6lTx0xSMvQF7ZBfCOFMh1aqv44Ufb4J%2FdQ39G1mtWrgEDbozGwhLbyNNZQ2%2BTLL3dl2%2FrRfY1%2BWsG96fkH0UUNmYSIqnV2pxh3yv9ISraBzX7IoJJan9oNxz0CXezJH2OCZ%2FhHB0Z0bnlhA8ZYoF%2Fzk0CAJqDDFoKo4RIhQiDiHh6uw%3D%3D&response-content-disposition=attachment%3B+filename%3Dhouse-prices-advanced-regression-techniques.zip'
+if(!file.exists(destfilename)){
+  res <- tryCatch(download.file(url,destfilename, method="auto"),
+              error=function(e) {
+                stop(e)
+              },finally = {
+                #print(paste0("Download ",DATA_FILENAME,' complete'))
+              })
+  if (res==0){
+    unzip(destfilename, exdir=file.path(BASE_PATH,DATA_DIR))
+  }
+}
+
+# we should be able to load data now from our BASE_PATH + DATA_PATH
+test_data <- read.csv(file.path(BASE_PATH,DATA_DIR,'test.csv'), stringsAsFactors = FALSE)
+train_data <- read.csv(file.path(BASE_PATH,DATA_DIR,'train.csv'), stringsAsFactors = FALSE)
+
+
+# setup variables 
+rawvarlist<-c("SalePrice","Integer", "The property's sale price in dollars. This is the target variable that we are trying to predict.",
+              "MSSubClass","Integer","The building class",
+              "MSZoning","String","The general zoning classification",
+              "LotFrontage", "String","Linear feet of street connected to property",
+              "LotArea", "Integer", "Lot size in square feet",
+              "Street", "String","Type of road access",
+              "Alley", "String","Type of alley access",
+              "LotShape", "String","General shape of property",
+              "LandContour", "String","Flatness of the property",
+              "Utilities", "String","Type of utilities available",
+              "LotConfig", "String","Lot configuration",
+              "LandSlope", "String","Slope of property",
+              "Neighborhood","String","Physical locations within Ames city limits",
+              "Condition1", "String","Proximity to main road or railroad",
+              "Condition2", "String","Proximity to main road or railroad (if a second is present)",
+              "BldgType", "String","Type of dwelling",
+              "HouseStyle", "String","Style of dwelling",
+              "OverallQual", "Interger","Overall material and finish quality",
+              "OverallCond", "Integer","Overall condition rating",
+              "YearBuilt", "Integer","Original construction date",
+              "YearRemodAdd", "Integer","Remodel date",
+              "RoofStyle", "String", "Type of roof",
+              "RoofMatl", "String","Roof material",
+              "Exterior1st","String","Exterior covering on house",
+              "Exterior2nd", "String","Exterior covering on house (if more than one material)",
+              "MasVnrType", "String","Masonry veneer type",
+              "MasVnrArea", "String","Masonry veneer area in square feet",
+              "ExterQual", "String","Exterior material quality",
+              "ExterCond", "String","Present condition of the material on the exterior",
+              "Foundation", "String","Type of foundation",
+              "BsmtQual", "String","Height of the basement",
+              "BsmtCond", "String","General condition of the basement",
+              "BsmtExposure", "String","Walkout or garden level basement walls",
+              "BsmtFinType1", "String","Quality of basement finished area",
+              "BsmtFinSF1", "Integer", "Type 1 finished square feet",
+              "BsmtFinType2", "String","Quality of second finished area (if present)",
+              "BsmtFinSF2", "Integer","Type 2 finished square feet",
+              "BsmtUnfSF", "Integer","Unfinished square feet of basement area",
+              "TotalBsmtSF","Integer","Total square feet of basement area",
+              "Heating", "String","Type of heating",
+              "HeatingQC", "String","Heating quality and condition",
+              "CentralAir", "String","Central air conditioning",
+              "Electrical", "String","Electrical system",
+              "1stFlrSF", "Integer","First Floor square feet",
+              "2ndFlrSF", "Integer", "Second floor square feet",
+              "LowQualFinSF", "Integer","Low quality finished square feet (all floors)",
+              "GrLivArea", "Integer","Above grade (ground) living area square feet",
+              "BsmtFullBath","Integer","Basement full bathrooms",
+              "BsmtHalfBath","Integer","Basement half bathrooms",
+              "FullBath","Integer","Full bathrooms above grade",
+              "HalfBath","Integer","Half baths above grade",
+              "Bedroom","Integer","Number of bedrooms above basement level",
+              "Kitchen","Integer","Number of kitchens",
+              "KitchenQual", "String","Kitchen quality",
+              "TotRmsAbvGrd","Integer", "Total rooms above grade (does not include bathrooms)",
+              "Functional", "String","Home functionality rating",
+              "Fireplaces","Integer","Number of fireplaces",
+              "FireplaceQu", "String","Fireplace quality",
+              "GarageType", "String","Garage location",
+              "GarageYrBlt", "String","Year garage was built",
+              "GarageFinish", "String","Interior finish of the garage",
+              "GarageCars","Integer","Size of garage in car capacity",
+              "GarageArea","Integer","Size of garage in square feet",
+              "GarageQual", "String","Garage quality",
+              "GarageCond", "String","Garage condition",
+              "PavedDrive", "String","Paved driveway",
+              "WoodDeckSF","Integer","Wood deck area in square feet",
+              "OpenPorchSF","Integer","Open porch area in square feet",
+              "EnclosedPorch","Integer","Enclosed porch area in square feet",
+              "3SsnPorch","Integer","Three season porch area in square feet",
+              "ScreenPorch","Integer","Screen porch area in square feet",
+              "PoolArea", "Integer","Pool area in square feet",
+              "PoolQC", "String","Pool quality",
+              "Fence", "String","Fence quality",
+              "MiscFeature", "String","Miscellaneous feature not covered in other categories",
+              "MiscVal", "Integer","$Value of miscellaneous feature",
+              "MoSold", "Integer","Month Sold",
+              "YrSold", "Integer","Year Sold",
+              "SaleType", "String","Type of sale",
+              "SaleCondition", "String","Condition of sale")
+VARIABLE_LIST <- data.frame(matrix(rawvarlist, ncol = 3, byrow = TRUE))
+names(VARIABLE_LIST)<-c('Variable Name','Type', 'Variable Description')
+
+```
+
+## Proposal
+
+***
+
+### About the Project
+This data analysis project is inspired from the House Prices: Advanced Regression Techniques competition held in Kaggle.
+In this project we will be try to predict the final price of each home, based on the **`r ncol(test_data)-1`** explanatory variables describing  aspects of residential homes in **Ames, Iowa**.
+
+### Tentative Titles
+
+**Housing Prices? How predictable!** 
+
+**Does adding bathrooms improve price?** 
+
+**Remodeling your house?  You may want to consider this first.** 
+
+**What impact will be according to neighborhood?**
+
+
+
+## Github Repository
+
+Collaboration data will be shared at 
+https://github.com/stat-420/final-project
+
+
+## Data Set
+
+### Source
+
+We are using house prie data available at https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data. We will be using various regression techniques to analyze the data that we have learned in class. Below are the details about our dataset.
+
+### Background
+The Ames Housing dataset was compiled by Dean De Cock for use in data science education. It's an incredible alternative for data scientists looking for a modernized and expanded version of the often cited Boston Housing dataset. 
+
+
+### File descriptions
+The attached R code will automatically create a data directory, attempt to download the zip file from kaggle, and extract to a data sub-directory:
+
+- `train.csv` -  training set of `r nrow(train_data)`x`r ncol(train_data)` observations with  `SalePrice`
+- `test.csv `-  testing set `r nrow(test_data)`x`r ncol(test_data)` observations without `SalePrice`
+- `data_description.txt` - full description of each column, originally prepared by Dean De Cock but lightly edited to match the column names used here
+
+
+### Data fields
+
+A breif description of the variables used:
+
+```{r echo=F}
+VARIABLE_LIST %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling("hover","striped", full_width = FALSE)
+
+```
+
+### Data Snippet
+Here is a snippet of our train data set, with first few columns. As part of this project, we will be identifying the predictors which has the effect on response variable in predicting the housing prices.
+
+
+```{r ,echo=T}
+head(train_data) %>%
+  select(Id,SalePrice,SaleType,LotArea,BedroomAbvGr,FullBath,HalfBath,GrLivArea) %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling("hover","striped", full_width = FALSE)
+
+```
+
+
+
+### Data Cleaning
+
+There are missing values within the data for many of the variables, and we need to recode those values into something numeric or string instead of NA.
+
+```{r echo=T}
+
+#Drop factor variables with less than 2 levels & keep non-factor vars
+names(train_data) <- make.names(names(train_data))
+features <- setdiff(colnames(train_data), c("Id", "SalePrice"))
+for (f in features) {
+  # find NA's 
+  if (any(is.na(train_data[[f]]))) 
+    # if its a char then use Other as a replacment
+    if (is.character(train_data[[f]])){ 
+      train_data[[f]][is.na(train_data[[f]])] <- "Others"
+    }else{
+      # otherwise its a number, use a suitable number other than NA
+      train_data[[f]][is.na(train_data[[f]])] <- -999  
+    }
+}
+
+# store classes  which are not factors
+column_class <- lapply(train_data,class)
+column_class <- column_class[column_class != "factor"]
+# store factor levels
+factor_levels <- lapply(train_data, nlevels)
+factor_levels <- factor_levels[factor_levels > 1]
+# convert back to data frame
+train_data <- as.data.frame(unclass(train_data))
+# Build a model...
+fit <- lm(SalePrice ~ . , data=train_data)
+
+
+
+```
+
+
+
+
+## Statement of interest
+
+- We like to implement the various skills that we learnt throughout the course with a real life data which would actually give us a real time application experience which will satisfy our research interest. 
+- Down the line, we have a plan to buy our dream home in US and this would help us predicting the house prices and we can plan our budgeting, which will satisfy our personal interest.
+
+-As in zillow or opendoor company use big data analysis for predicting the house prices according to various factors, we'd like to try what factors have correlation with the house prices and how it impact on. Eventually we could categorize what predictors have most impact on the hosue prices, and the least as well. It will make us decide to pay reasonable price for our US home.
+
+
+
+***
+
+## Acknowledgements
+
+- http://daviddalpiaz.github.io/appliedstats/
+- https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data
+- http://jse.amstat.org/v19n3/decock.pdf
+
+
+
+
+
+
+
+
+
