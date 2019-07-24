@@ -1,0 +1,272 @@
+---
+title: "Project Proposal"
+date: '2019-07-16'
+author:
+- James Banasiak jamesmb3@illinois.edu
+- Ryan Epp ryanepp2@illinois.edu
+- Nana Tark ytark2@illinois.edu
+version: 0.0.3
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+urlcolor: cyan
+---
+
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+# load data again - if not loaded already from proposal  - the following code is copied directly from proposal.Rmd - additional libraries are used for testing 
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(lmtest)
+library(caret)
+library(mlbench)
+
+# bootstrap our environment - download data - setup
+# this will create a STAT420_PROJECT_DATA folder in your HOME_DIR on unix/mac or in "Documents" on windows, download data, extract files
+BASE_PATH <- "~/git/STAT420/final-project"
+#BASE_PATH <- "~"
+DATA_DIR <- "data"
+CACHE_DIR <- "cache"
+DATA_FILENAME <- 'advanced-regression-techniques.zip'
+
+if(getwd()==DATA_DIR){
+  setwd(BASE_PATH)
+}
+
+# create data dir if not exist
+if(!dir.exists(file.path(BASE_PATH,DATA_DIR))){
+  dir.create(file.path(BASE_PATH,DATA_DIR))
+} 
+if(!dir.exists(file.path(BASE_PATH,CACHE_DIR))){
+  dir.create(file.path(BASE_PATH,CACHE_DIR))
+} 
+# download data from a url if not exists
+destfilename<-file.path(BASE_PATH,DATA_DIR,DATA_FILENAME)
+url<-'https://storage.googleapis.com/kaggle-competitions-data/kaggle/5407/205873/all.zip?GoogleAccessId=web-data@kaggle-161607.iam.gserviceaccount.com&Expires=1563514423&Signature=D52AtYvPZHZ5QxHzdJbHk4qzBTQyDE%2F6NAgBDREC4dNlN15weHf3Pm7D8kYFdTWg5PQvMW9KJGciRrqxloqFsU5a%2Fa%2BxXAK7Kf6L7YtYPg7Ta2UZenOl4CNvxjH1mTAdlTyuDmcxXPxS%2B40nJwrnIzVbnzBIWZ3xsEacOGq6lTx0xSMvQF7ZBfCOFMh1aqv44Ufb4J%2FdQ39G1mtWrgEDbozGwhLbyNNZQ2%2BTLL3dl2%2FrRfY1%2BWsG96fkH0UUNmYSIqnV2pxh3yv9ISraBzX7IoJJan9oNxz0CXezJH2OCZ%2FhHB0Z0bnlhA8ZYoF%2Fzk0CAJqDDFoKo4RIhQiDiHh6uw%3D%3D&response-content-disposition=attachment%3B+filename%3Dhouse-prices-advanced-regression-techniques.zip'
+if(!file.exists(destfilename)){
+  res <- tryCatch(download.file(url,destfilename, method="auto"),
+              error=function(e) {
+                stop(e)
+              },finally = {
+                #print(paste0("Download ",DATA_FILENAME,' complete'))
+              })
+  if (res==0){
+    unzip(destfilename, exdir=file.path(BASE_PATH,DATA_DIR))
+  }
+}
+
+# we should be able to load data now from our BASE_PATH + DATA_PATH
+test_data <- read.csv(file.path(BASE_PATH,DATA_DIR,'test.csv'), stringsAsFactors = FALSE)
+train_data <- read.csv(file.path(BASE_PATH,DATA_DIR,'train.csv'), stringsAsFactors = FALSE)
+#Drop factor variables with less than 2 levels & keep non-factor vars
+names(train_data) <- make.names(names(train_data))
+features <- setdiff(colnames(train_data), c("Id", "SalePrice"))
+for (f in features) {
+  # find NA's 
+  if (any(is.na(train_data[[f]]))) 
+    # if its a char then use Other as a replacment
+    if (is.character(train_data[[f]])){ 
+      train_data[[f]][is.na(train_data[[f]])] <- "Others"
+    }else{
+      # otherwise its a number, use a suitable number other than NA
+      train_data[[f]][is.na(train_data[[f]])] <- -999  
+    }
+}
+
+# store classes  which are not factors
+column_class <- lapply(train_data,class)
+column_class <- column_class[column_class != "factor"]
+# store factor levels
+factor_levels <- lapply(train_data, nlevels)
+factor_levels <- factor_levels[factor_levels > 1]
+# convert back to data frame
+train_data <- as.data.frame(unclass(train_data))
+
+```
+
+
+
+# Introduction
+
+
+```{r echo=T}
+
+n<-nrow(train_data)
+##########################################################
+#
+# cached_lm:: checks local disk for a cached version of the model
+#   instead of calling lm() directly, call cached_lm() and pass the same params
+#   useful for consecutive r-markdown calls that will constant re-use existing models
+#   jamesmb3@illinois.edu
+##########################################################
+cached_lm<-function(formula, data, subset, weights, na.action, method = "qr", 
+    model = TRUE, x = FALSE, y = FALSE, qr = TRUE, singular.ok = TRUE, 
+    contrasts = NULL, offset, rebuild= FALSE,  ...) 
+{
+  cl <- match.call()
+  mf <- match.call(expand.dots = FALSE)
+  m <- match(c("formula", "data", "subset", "weights", "na.action", "offset"), names(mf), 0L)
+  fc <- mf[c(1L, m)]
+  # first we build a UUID for this model using all terms 
+  terms = attr(terms.formula(formula,  data = data), "term.labels")
+  model_name <- paste0(terms,collapse = "+")
+  # add in model heuristics
+  model_name <- paste0(model_name,nrow(data))
+  # digest
+  model_sha <- digest::digest(model_name,"sha1")
+  # check if file exists
+  model_path <-file.path(BASE_PATH,CACHE_DIR,paste0(model_sha,".rds"))
+  # if it exists, return it ...
+  if(file.exists(model_path) && !rebuild ){
+    print(paste("[cache] loaded model from ", model_path))
+    m<-readRDS(model_path)
+    return(m)
+  }
+  # otherwise run it, and save it ..
+ else{
+    #  use lm function
+    fc[1]<-call(name = "lm")
+    print(fc)
+    m<-eval(fc)
+    saveRDS(m, file = model_path)
+    return(m)
+  }
+}
+##########################################################
+#
+# cached_step:: checks local disk for a cached version of the model returned from step() for aic/bic
+#   instead of calling step() directly, call cached_step() and pass the same params..
+#   Useful for r-markdown consecutive calls for minor adjustmests in formatting, models do not have to be rediscovered
+#   TODO: can be improved with additional params.
+#   jamesmb3@illinois.edu
+##########################################################
+cached_step <-function(object, scope, scale = 0, direction = c("both", "backward", 
+    "forward"), trace = 1, keep = NULL, steps = 1000, k = 2,  rebuild=FALSE,
+    ...)
+{
+  # build a uuid from the base model
+  terms<-labels(object)
+  # first we build a UUID for this model using all terms 
+  model_name <- paste0(terms,collapse = "+")
+  # add in model heuristics
+  model_name <- paste0(model_name,nrow(object$model), length(coef(object)),as.character(direction) ,as.character(k))
+  # digest
+  model_sha <- digest::digest(model_name,"sha1")
+  model_path <-file.path(BASE_PATH,CACHE_DIR,paste0(model_sha,".rds"))
+  if(file.exists(model_path) && !rebuild ){
+    print(paste("[cache] loaded step model from ", model_path))
+    return(readRDS(model_path))
+  }
+  else{
+    m <- step(model , k = k, trace = trace, direction = direction)
+    saveRDS(m, file = model_path)
+    return(m)
+  }
+}
+
+##########################################################
+#
+# Helper functions from previous homeworks
+#
+get_bp_decision = function(model, alpha=.05) {
+  decide = unname(bptest(model)$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+##########################################################
+#
+get_sw_decision = function(model, alpha=.05) {
+  decide = unname(shapiro.test(resid(model))$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+##########################################################
+#
+get_num_params = function(model) {
+  length(coef(model))
+}
+##########################################################
+#
+get_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+##########################################################
+#
+get_adj_r2 = function(model) {
+  summary(model)$adj.r.squared
+}
+
+
+
+
+##########################################################
+#
+#  M O D E L S 
+#  Define base models 
+#
+model_additive<-cached_lm(formula = log(SalePrice) ~ ., data=train_data)
+influential_indexes <- as.vector(which(cooks.distance(model_additive) > 4 / length(cooks.distance(model_additive))))
+model_additive_influential<-cached_lm(formula = log(SalePrice) ~ ., data=train_data[-influential_indexes,])
+
+
+##########################################################
+#
+# Model Configuration  - it may take several minutes to build models, so we will cache them
+#
+model_config<-list(
+  "additive"=model_additive,
+  "additive_influential"=model_additive_influential,
+  "backward_aic"=cached_step(model_additive,direction = 'backward', trace = T),
+  "backward_aic_influential"=cached_step(model_additive_influential,direction = 'backward', trace = F),
+  "backward_bic"=cached_step(model_additive,direction = 'backward', k = log(n), trace = F),
+  "backward_bic_influential"=cached_step(model_additive_influential,direction = 'backward', k = log(n), trace = F)
+)
+
+
+i<-1
+# here we can iterate all models and show in table
+dfs<-lapply(names(model_config),function(model_name){
+  # model_name<-'backward_bic'
+  m<-model_config[[model_name]]
+  mylabels<-paste0(labels(m),collapse = " + ") 
+  # store the bptest p value
+  bpval<-bptest(m)$p.value
+  # store the shapiro test p value
+  shapiroval<-shapiro.test(resid(m))$p.value
+  # calculate the n of influential points 
+  cookcount<-nrow(m$model[cooks.distance(m) > (4/length(cooks.distance(m))),])
+  n_coefficients<-length(coef(m))-1
+  df<-data.frame(model_name,paste0(mylabels,collapse = " + "),i,
+                 get_bp_decision(m),get_sw_decision(m),get_num_params(m),get_loocv_rmse(m),get_adj_r2(m),cookcount)
+  names(df)<-c("Model Name", "Model Vars","Model Number",
+               "BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs")
+  
+  
+  
+  
+  i<<-i+1
+  return(df)
+})
+
+
+
+resultDF <- data.table::rbindlist(dfs)
+# build html table 
+resultDF %>%
+  select("Model Name","Model Number","BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs") %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling("hover","striped", full_width = FALSE)
+
+
+
+```
+
+```{r echo=T}
+
+
+
+
+```
+
+
+
