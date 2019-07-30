@@ -1,0 +1,25 @@
+---
+title: "Housing Prices? How predictable!"
+date: 'Summer 2019'
+author: James Banasiak (jamesmb3), Nana Tark (ytark2) and Ryan Epp (ryanepp2)
+version: 0.0.4
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+urlcolor: cyan
+---
+
+***
+
+# Introduction
+In this data analysis project we explore the dataset from the *House Prices: Advanced Regression Techniques* competition held on [Kaggle](https://www.kaggle.com/c/house-prices-advanced-regression-techniques). The dataset describes residential homes in Ames, Iowa. The goal of is project (and the Kaggle competition) is to predict the sale price of a home based on it's other attributes. Theses attributes are represented in the dataset by an extensive 79 variables, including everything from the number of bathrooms, to the material the roof is made out of, to the year the home was built.
+
+Our primary goal is to build a model which can predict house prices as accurately as possible. We want our model to work well with previously unseen examples. So to avoid overfitting, we will use cross validation accuracy to evaluate our candidate models.
+
+As a secondary goal, we'd like our model to be stable and interperatable so we will also consider BIC, and Adjusted $R^2$ when selecting a best model.
+
+
+
+
+
