@@ -19,7 +19,64 @@ Our primary goal is to build a model which can predict house prices as accuratel
 
 As a secondary goal, we'd like our model to be stable and interperatable so we will also consider BIC, and Adjusted $R^2$ when selecting a best model.
 
+***
 
+# Methods
 
+## Data Preparation
 
+First, we load the training data and extract the number of samples and the feature names:
 
+```{r}
+train_data <- read.csv('data/train.csv')
+n <- nrow(train_data)
+features <- setdiff(colnames(train_data), c("Id", "SalePrice"))
+```
+
+The housing dataset includes **`r length(features)` features** and **`r n` samples.**
+
+Naturally, we expect that some examples are missing features, let's try removing those samples and see how much data we'd have left to work with:
+
+```{r}
+train_data_omit_na = na.omit(train_data)
+nrow(train_data_omit_na)
+```
+
+Bummer! It appears every sample has is missing at least one feature. So we can't simply omit them or we'll have nothing left to work with! For factor variables with missing values, we can simply create a new *`other`* category to fill in for *`NA`* values. 
+
+```{r}
+other_category = 'other'
+for (f in features) {
+ if (is.factor(train_data[[f]])) {
+   train_data[[f]] = addNA(train_data[[f]], ifany = TRUE)
+   levels(train_data[[f]]) <- c(levels(train_data[[f]]), other_category)
+   train_data[[f]][is.na(train_data[[f]])] <- other_category
+ }
+}
+
+# Try omitting samples with missing features again:
+train_data_omit_na = na.omit(train_data)
+nrow(train_data_omit_na)
+```
+
+This appears to solve most of the problem, but we're still losing `r n - nrow(train_data_omit_na)` samples, since they have missing numeric feature values. Since they're a large portion (`r round((n*1.0 - nrow(train_data_omit_na)) / n * 100)`% of the dataset), we don't want to ignore them. Unfortunately, finding suitable replacement values for numeric features is more difficult.
+
+Let's see which features have missing values:
+
+```{r}
+Filter(function (f) any(is.na(train_data[[f]])), features)
+```
+
+Great, we only need to deal with 3 features. Let's  replace the *`NA`* values of these features with sensible defaults.
+
+For `MasVnrArea`, the masonry veneer area in square feet, we have a large number of examples with a value of 0, so that should be a decent replacement. Since it doesn't seem especially important, we might also consider dropping it entirely instead of the samples.
+
+```{r}
+train_data$MasVnrArea[is.na(train_data$MasVnrArea)] <- 0
+```
+
+Since `GarageYrBlt` and `YearBuilt` are highly correlated (`r cor(train_data_omit_na$GarageYrBlt, train_data_omit_na$YearBuilt)`) and they're identical `r round(sum(train_data_omit_na$GarageYrBlt == train_data_omit_na$YearBuilt) / n * 100)`% of the time, we'll simply replace missing `GarageYrBlt` values with `YearBuilt` values.
+
+```{r}
+train_data$GarageYrBlt[is.na(train_data$GarageYrBlt)] <- train_data$YearBuilt[is.na(train_data$GarageYrBlt)]
+```

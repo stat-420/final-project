@@ -383,6 +383,9 @@ $(document).ready(function () {
 <div id="TOC">
 <ul>
 <li><a href="#introduction">Introduction</a></li>
+<li><a href="#methods">Methods</a><ul>
+<li><a href="#data-preparation">Data Preparation</a></li>
+</ul></li>
 </ul>
 </div>
 
@@ -392,6 +395,45 @@ $(document).ready(function () {
 <p>In this data analysis project we explore the dataset from the <em>House Prices: Advanced Regression Techniques</em> competition held on <a href="https://www.kaggle.com/c/house-prices-advanced-regression-techniques">Kaggle</a>. The dataset describes residential homes in Ames, Iowa. The goal of is project (and the Kaggle competition) is to predict the sale price of a home based on it’s other attributes. Theses attributes are represented in the dataset by an extensive 79 variables, including everything from the number of bathrooms, to the material the roof is made out of, to the year the home was built.</p>
 <p>Our primary goal is to build a model which can predict house prices as accurately as possible. We want our model to work well with previously unseen examples. So to avoid overfitting, we will use cross validation accuracy to evaluate our candidate models.</p>
 <p>As a secondary goal, we’d like our model to be stable and interperatable so we will also consider BIC, and Adjusted <span class="math inline">\(R^2\)</span> when selecting a best model.</p>
+<hr />
+</div>
+<div id="methods" class="section level1">
+<h1>Methods</h1>
+<div id="data-preparation" class="section level2">
+<h2>Data Preparation</h2>
+<p>First, we load the training data and extract the number of samples and the feature names:</p>
+<pre class="r"><code>train_data &lt;- read.csv('data/train.csv')
+n &lt;- nrow(train_data)
+features &lt;- setdiff(colnames(train_data), c(&quot;Id&quot;, &quot;SalePrice&quot;))</code></pre>
+<p>The housing dataset includes <strong>79 features</strong> and <strong>1460 samples.</strong></p>
+<p>Naturally, we expect that some examples are missing features, let’s try removing those samples and see how much data we’d have left to work with:</p>
+<pre class="r"><code>train_data_omit_na = na.omit(train_data)
+nrow(train_data_omit_na)</code></pre>
+<pre><code>## [1] 0</code></pre>
+<p>Bummer! It appears every sample has is missing at least one feature. So we can’t simply omit them or we’ll have nothing left to work with! For factor variables with missing values, we can simply create a new <em><code>other</code></em> category to fill in for <em><code>NA</code></em> values.</p>
+<pre class="r"><code>other_category = 'other'
+for (f in features) {
+ if (is.factor(train_data[[f]])) {
+   train_data[[f]] = addNA(train_data[[f]], ifany = TRUE)
+   levels(train_data[[f]]) &lt;- c(levels(train_data[[f]]), other_category)
+   train_data[[f]][is.na(train_data[[f]])] &lt;- other_category
+ }
+}
+
+# Try omitting samples with missing features again:
+train_data_omit_na = na.omit(train_data)
+nrow(train_data_omit_na)</code></pre>
+<pre><code>## [1] 1121</code></pre>
+<p>This appears to solve most of the problem, but we’re still losing 339 samples, since they have missing numeric feature values. Since they’re a large portion (23% of the dataset), we don’t want to ignore them. Unfortunately, finding suitable replacement values for numeric features is more difficult.</p>
+<p>Let’s see which features have missing values:</p>
+<pre class="r"><code>Filter(function (f) any(is.na(train_data[[f]])), features)</code></pre>
+<pre><code>## [1] &quot;LotFrontage&quot; &quot;MasVnrArea&quot;  &quot;GarageYrBlt&quot;</code></pre>
+<p>Great, we only need to deal with 3 features. Let’s replace the <em><code>NA</code></em> values of these features with sensible defaults.</p>
+<p>For <code>MasVnrArea</code>, the masonry veneer area in square feet, we have a large number of examples with a value of 0, so that should be a decent replacement. Since it doesn’t seem especially important, we might also consider dropping it entirely instead of the samples.</p>
+<pre class="r"><code>train_data$MasVnrArea[is.na(train_data$MasVnrArea)] &lt;- 0</code></pre>
+<p>Since <code>GarageYrBlt</code> and <code>YearBuilt</code> are highly correlated (0.8235195) and they’re identical 60% of the time, we’ll simply replace missing <code>GarageYrBlt</code> values with <code>YearBuilt</code> values.</p>
+<pre class="r"><code>train_data$GarageYrBlt[is.na(train_data$GarageYrBlt)] &lt;- train_data$YearBuilt[is.na(train_data$GarageYrBlt)]</code></pre>
+</div>
 </div>
 
 
