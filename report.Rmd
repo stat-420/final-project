@@ -105,6 +105,9 @@ train_data <- as.data.frame(unclass(train_data))
 
 # Introduction
 
+We can see that 
+
+
 
 ```{r echo=T}
 
@@ -222,14 +225,11 @@ get_adj_r2 = function(model) {
 #model_additive<-cached_lm(formula = log(SalePrice) ~ ., data=train_data)
 
 
-model_additive = cached_lm(log(SalePrice) ~ 
-                      LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
-                      OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
-                      Fireplaces + MSZoning + YearBuilt, data = train_data)
+model_additive = cached_lm(log(SalePrice) ~ ., data = train_data)
 
 
 influential_indexes <- as.vector(which(cooks.distance(model_additive) > 4 / length(cooks.distance(model_additive))))
-model_additive_influential<-cached_lm(formula = log(SalePrice) ~  LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + Fireplaces + MSZoning + YearBuilt, data=train_data[-influential_indexes,])
+model_additive_influential<-cached_lm(formula = log(SalePrice) ~ ., data=train_data[-influential_indexes,])
 
 # model_interaction<-cached_lm(formula = log(SalePrice) ~ .^2, data=train_data)
 # model_interaction_influential<-cached_lm(formula = log(SalePrice) ~ .^2, data=train_data[-influential_indexes,])
@@ -272,9 +272,15 @@ dfs<-lapply(names(model_config),function(model_name){
   # calculate the n of influential points 
   cookcount<-nrow(m$model[cooks.distance(m) > (4/length(cooks.distance(m))),])
   n_coefficients<-length(coef(m))-1
+  if (grepl("influential",model_name)){
+      preds<-(predict(m,train_data[-influential_indexes,]))
+  }
+  else{
+    preds<-(predict(m,train_data))
+  }
+  my_rsme<-ModelMetrics::rmse(train_data$SalePrice,exp(preds))
   
-  preds<-exp(predict(m,train_data))
-  my_rsme<-ModelMetrics::rmse(train_data$SalePrice,preds)
+  
   df<-data.frame(model_name,paste0(mylabels,collapse = " + "),i,
                  get_bp_decision(m),get_sw_decision(m),get_num_params(m),my_rsme,get_adj_r2(m),cookcount)
   names(df)<-c("Model Name", "Model Vars","Model Number",
@@ -317,4 +323,20 @@ corrplot(correlations, method="square", order ="FPC")
 ```
 
 
+
+# Notes about errors
+
+
+You may get a factor error such as 
+```
+Error in model.frame.default(Terms, newdata, na.action = na.action, xlev = object$xlevels) : factor Condition1 has new levels RRNe
+```
+
+We can demonstrate this is happening because of the selection, for example when we look at Condition1 we see the `RRNe` is 0 and being excluded
+```{r echo=T}
+
+table(train_data$Condition1)
+table(train_data[-influential_indexes,]$Condition1)
+
+```
 
