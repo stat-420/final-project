@@ -1,7 +1,7 @@
 ---
 title: "Housing Prices? How predictable!"
 date: 'Summer 2019'
-author: James Banasiak (jamesmb3), Nana Tark (ytark2) and Ryan Epp (ryanepp2)
+author: James Banasiak (jamesmb3), Ryan Epp (ryanepp2) and Nana Tark (ytark2)
 version: 0.0.4
 output:
   html_document: 
@@ -23,14 +23,24 @@ As a secondary goal, we'd like our model to be stable and interperatable so we w
 
 # Methods
 
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+library(boot)
+library(rsq)
+library(lmtest)
+library(knitr)
+library(forcats)
+library(leaps)
+library(caret)
+```
+
 ## Data Preparation
 
 First, we load the training data and extract the number of samples and the feature names:
 
 ```{r}
-train_data <- read.csv('data/train.csv')
-n <- nrow(train_data)
-features <- setdiff(colnames(train_data), c("Id", "SalePrice"))
+train_data = read.csv('data/train.csv')
+n = nrow(train_data)
+features = setdiff(colnames(train_data), c("Id", "SalePrice"))
 ```
 
 The housing dataset includes **`r length(features)` features** and **`r n` samples.**
@@ -49,9 +59,8 @@ Bummer! It appears every sample has is missing at least one feature. So we can't
 other_category = 'other'
 for (f in features) {
   if (is.factor(train_data[[f]]) && any(is.na(train_data[[f]]))) {
-    train_data[[f]] = addNA(train_data[[f]], ifany = TRUE)
-    levels(train_data[[f]]) <- c(levels(train_data[[f]]), other_category)
-    train_data[[f]][is.na(train_data[[f]])] <- other_category
+    levels(train_data[[f]]) = c(levels(train_data[[f]]), other_category)
+    train_data[[f]][is.na(train_data[[f]])] = other_category
   }
 }
 
@@ -73,21 +82,21 @@ Great, we only need to deal with missing values for 3 numeric features. Let's  r
 For `MasVnrArea`, the masonry veneer area in square feet, we have a large number of examples with a value of 0, so that should be a decent replacement. Since it doesn't seem especially important, we might also consider dropping the feature entirely instead of the samples.
 
 ```{r}
-train_data$MasVnrArea[is.na(train_data$MasVnrArea)] <- 0
+train_data$MasVnrArea[is.na(train_data$MasVnrArea)] = 0
 ```
 
 Since `GarageYrBlt` and `YearBuilt` are highly correlated (`r cor(train_data_omit_na$GarageYrBlt, train_data_omit_na$YearBuilt)`) and they're identical `r round(sum(train_data_omit_na$GarageYrBlt == train_data_omit_na$YearBuilt) / n * 100)`% of the time, we'll simply replace missing `GarageYrBlt` values with `YearBuilt` values.
 
 ```{r}
-train_data$GarageYrBlt[is.na(train_data$GarageYrBlt)] <- train_data$YearBuilt[is.na(train_data$GarageYrBlt)]
+train_data$GarageYrBlt[is.na(train_data$GarageYrBlt)] = train_data$YearBuilt[is.na(train_data$GarageYrBlt)]
 ```
 
 Coming up with replacement values for `LotFrontage` (linear feet of street connected to property) is much more difficult. It seems too important of a feature to simply remove. There are also no cases where the value is 0, and so no obvious replacement value.
 
-There are a few variables like `LotArea`, `LotShape` and `MSZoning` that seem like they might be predictive of `LotFrontage`. Let's quickly build a model to predict `LotFrontage` and then use it to fill in our missing values.
+There are a few variables like `LotArea`, `LotShape` and `LotConfig` that seem like they might be predictive of `LotFrontage`. Let's quickly build a model to predict `LotFrontage` and then use it to fill in our missing values.
 
 ```{r}
-lot_frontage_model <- lm(LotFrontage ~ log(LotArea) + LotArea:LotConfig + LotShape + LandSlope + YearBuilt + BldgType, data = train_data_omit_na)
+lot_frontage_model = lm(LotFrontage ~ log(LotArea) + LotArea:LotConfig + LotShape + LandSlope + YearBuilt + BldgType, data = train_data_omit_na)
 ```
 
 We can be confident the `lot_frontage_model` above is doing a good job predicting `LotFrontage` because: 
@@ -101,7 +110,7 @@ If we wanted to be even more confident, we might check the cross validated RMSE,
 Now we can fillin the missing `LotFrontage` values:
 
 ```{r}
-train_data$LotFrontage[is.na(train_data$LotFrontage)] <- predict(lot_frontage_model, newdata = train_data[is.na(train_data$LotFrontage),])
+train_data$LotFrontage[is.na(train_data$LotFrontage)] = predict(lot_frontage_model, newdata = train_data[is.na(train_data$LotFrontage),])
 
 # Check if there are any remaining NA values in the training data:
 any(is.na(train_data))
@@ -122,10 +131,108 @@ for (f in features) {
 }
 
 # Update `features`:
-features <- setdiff(colnames(train_data), c("Id", "SalePrice"))
+features = setdiff(colnames(train_data), c("Id", "SalePrice"))
 ```
 
-Great, we've added `r length(features) - 79` new factor variables for a total of `r length(features)` features.
+Great, we've added `r length(features) - 79` new factor variables for a total of **`r length(features)` features**.
+
+### Removing Categories with Few Samples
+
+// TODO: explain this
+```{r}
+cutoff = n * 0.05
+for (f in features) {
+  if (is.factor(train_data[[f]])) {
+    for (category in levels(train_data[[f]])) {
+      samples_in_cat = sum(na.omit(train_data[[f]]) == category)
+      if (samples_in_cat < cutoff) {
+        levels(train_data[[f]]) = c(levels(train_data[[f]]), other_category)
+        train_data[[f]][train_data[[f]] == category] = other_category
+      }
+    }
+  }
+}
+
+for (f in features) {
+  if (is.factor(train_data[[f]])) {
+    if (length(levels(train_data[[f]])) == 1) {
+      train_data = train_data[,!(names(train_data) == f)]
+    } else {
+      for (category in levels(train_data[[f]])) {
+        samples_in_cat = sum(na.omit(train_data[[f]]) == category)
+        if (samples_in_cat > n * 0.95) {
+          train_data = train_data[,!(names(train_data) == f)]
+        }
+      }
+    }
+  }
+}
+```
+
+## Model Evaluation
+
+As an evaluation metric, the Kaggle competition uses Root-Mean-Squared-Error (RMSE) on the *logorithm of the predicted and actual sale prices*. Taking the logorithm ensures that expensive houses don't have more of an impact on RMSE than cheap houses.
+
+We'll use this same metric as our primary quality indicator. To ensure we don't overfit, we'll apply it on a 5-fold cross validation set. We'll also keep our eye on BIC, Adjusted $R^2$ and a few other metrics.
+
+```{r}
+get_bp_decision = function(model, alpha = 0.05) {
+  decide = unname(bptest(model)$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+get_shapiro_decision = function(model, alpha = 0.05) {
+  decide = unname(shapiro.test(resid(model))$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+get_log_rmse = function(observed, predicted) {
+  sqrt(mean((log(predicted) - log(observed)) ^ 2))
+}
+
+get_cv_log_rmse = function(model_formula, folds = 5) {
+  total_rmse = 0
+  for (i in 1:folds) {
+    idx = sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.75, 0.25))
+    training_set = train_data[idx,]
+    cv_set = train_data[!idx,]
+    model = train(model_formula, data=training_set, method="glm")
+    cv_predicted = predict(model, newdata = cv_set)
+    total_rmse = total_rmse + get_log_rmse(cv_set$SalePrice, cv_predicted)
+  }
+  total_rmse / folds
+}
+
+evaluate_model = function(model) {
+  set.seed(42)
+  data.frame(Log.RMSE = get_cv_log_rmse(model$terms), 
+             Adj.R2 = rsq(model, adj=TRUE),
+             BIC = BIC(model),
+             Params = length(coef(model)),
+             Shapiro.Decision = get_shapiro_decision(model),
+             BP.Decision = get_bp_decision(model)
+             )
+}
+```
 
 ## Model Building
+
+### Baseline Models
+
+```{r, warning=FALSE}
+additive_large = lm(SalePrice ~ ., data = train_data)
+kable(evaluate_model(additive_large))
+```
+
+```{r, warning=FALSE}
+additive_small = lm(SalePrice ~ 
+                      LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
+                      OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
+                      Fireplaces + MSZoning + YearBuilt, data = train_data)
+kable(evaluate_model(additive_small))
+```
+
+# Results
+
+# Discussion
 
