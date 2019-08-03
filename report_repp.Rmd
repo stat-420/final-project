@@ -182,6 +182,20 @@ correlations <- cor(numeric_variables)
 corrplot(correlations, method="square", order ="FPC")
 ```
 
+Next we visualize the numeric predictors that are most correlated with `SalePrice`:
+
+```{r fig.height=12, fig.width=14}
+correlated_indices = abs(correlations['SalePrice',]) > 0.2
+correlated_predictors = names(correlations['SalePrice',correlated_indices])
+par(mfrow = c(ceiling(length(correlated_predictors) / 5.0), 5), mar=c(1,1,1,1), oma = c(0, 0, 3, 0))
+for (cor_pred in correlated_predictors) {
+  plot(train_data[[cor_pred]], train_data$SalePrice, 
+       main=cor_pred, col=rgb(0.1,0.1,0.1,0.3), pch=16, 
+       xaxt='n', yaxt='n', xlab = NA, ylab  = NA)
+}
+mtext("Predictors' Relationships to SalePrice", outer=TRUE, cex = 2)
+```
+
 ## Model Evaluation
 
 As an evaluation metric, the Kaggle competition uses Root-Mean-Squared-Error (RMSE) on the *logorithm of the predicted and actual sale prices*. Taking the logorithm ensures that expensive houses don't have more of an impact on RMSE than cheap houses.
@@ -218,12 +232,13 @@ get_cv_log_rmse = function(model_formula, folds = 5) {
   total_rmse / folds
 }
 
-evaluate_model = function(model) {
+evaluate_model = function(name, model) {
   set.seed(42)
-  data.frame(CV.Log.RMSE = get_cv_log_rmse(model$terms), 
+  data.frame(Model = name,
+             CV.Log.RMSE = get_cv_log_rmse(model$terms), 
              Adj.R2 = rsq(model, adj=TRUE),
              BIC = BIC(model),
-             Params = length(coef(model)),
+             Coefficients = length(coef(model)),
              Shapiro.Decision = get_shapiro_decision(model),
              BP.Decision = get_bp_decision(model)
              )
@@ -237,7 +252,8 @@ evaluate_model = function(model) {
 ```{r, warning=FALSE}
 # Start with a simple, naive model using all predictors added together 
 additive_large = lm(SalePrice ~ ., data = train_data)
-kable(evaluate_model(additive_large))
+additive_large_eval = evaluate_model("Additive Large", additive_large)
+kable(additive_large_eval)
 ```
 
 ```{r, warning=FALSE}
@@ -246,23 +262,52 @@ additive_small = lm(SalePrice ~
                       LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
                       OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
                       Fireplaces + MSZoning + YearBuilt, data = train_data)
-kable(evaluate_model(additive_small))
+additive_small_eval = evaluate_model("Additive Small", additive_small)
+kable(additive_small_eval)
 ```
 
 We can do much better on our target metric (CV.Log.RMSE) with the smaller model. Notice that the small additive model has far fewer parameters than the large one (`r length(coef(additive_small))` vs  `r length(coef(additive_large))`) It seems that with so many predictors, it's very easy to overfit to the training data. 
 
-### BIC Parameter Search
+### Parameter Search using BIC
 
-The small baseline model also has a better BIC. So next, we'll use BIC to do a backwards parameter search starting from `additive_large` model.
+The small baseline model also has a better BIC. So it looks like BIC might be a good metric to use to avoid overfitting. Next, we'll use BIC to do a backwards parameter search starting from `additive_large` model.
 
 ```{r, warning=FALSE}
-bic_backward = step(additive_large, k = log(n), direction = 'backward', trace = 0)
-kable(evaluate_model(bic_backward))
+additive_bic_backward = step(additive_large, k = log(n), direction = 'backward', trace = 0)
+additive_bic_backward_eval = evaluate_model("Additive Backward BIC", additive_bic_backward)
+kable(additive_bic_backward_eval)
 ```
 
+### Transformations
+Doing a parameter search using backwards BIC managed improve our results, but it still fails the Shapiro-Wilks and Breusch-Pagan tests. This suggests we might be able to achieve better results by applying some transformations to our the response and/or predictors.
 
+Based on the graphs in the *Data Exploration* section above, it appears that many predictors have an exponential or polynomial relationship with `SalePrice`.
+
+# TODO: log transform etc...
 
 # Results
+
+```{r}
+model_results = rbind(additive_large_eval, additive_small_eval, additive_bic_backward_eval)
+kable(model_results)
+```
+
+```{r}
+best_model = additive_bic_backward # TODO: replace with model that's actually the best
+```
+
+```{r}
+# Fitted vs. Residuals Plot
+plot(fitted(best_model), resid(best_model), col = 'grey',
+     xlab = "Fitted", ylab = "Residuals", main = "Fitted vs. Residuals")
+    abline(h = 0, col = 'orange', lwd = 2)
+```
+
+```{r}
+# Q-Q Plot
+qqnorm(resid(best_model), main = "Normal Q-Q Plot", col = 'grey')
+qqline(resid(best_model), col = 'dodgerblue', lwd = 2)
+```
 
 # Discussion
 
