@@ -160,7 +160,7 @@ cached_step <-function(object, scope, scale = 0, direction = c("both", "backward
     return(readRDS(model_path))
   }
   else{
-    m <- step(model , k = k, trace = trace, direction = direction)
+    m <- step(object = object,scope = scope, scale=scale, k = k, direction = direction,trace=trace,steps=steps)
     saveRDS(m, file = model_path)
     return(m)
   }
@@ -204,15 +204,26 @@ get_adj_r2 = function(model) {
 #  M O D E L S 
 #  Define base models 
 #
-model_additive<-cached_lm(formula = log(SalePrice) ~ ., data=train_data)
+#model_additive<-cached_lm(formula = log(SalePrice) ~ ., data=train_data)
+
+
+model_additive = lm(SalePrice ~ 
+                      LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
+                      OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
+                      Fireplaces + MSZoning + YearBuilt, data = train_data)
+
+
 influential_indexes <- as.vector(which(cooks.distance(model_additive) > 4 / length(cooks.distance(model_additive))))
 model_additive_influential<-cached_lm(formula = log(SalePrice) ~ ., data=train_data[-influential_indexes,])
 
+# model_interaction<-cached_lm(formula = log(SalePrice) ~ .^2, data=train_data)
+# model_interaction_influential<-cached_lm(formula = log(SalePrice) ~ .^2, data=train_data[-influential_indexes,])
 
 ##########################################################
 #
 # Model Configuration  - it may take several minutes to build models, so we will cache them
 #
+
 model_config<-list(
   "additive"=model_additive,
   "additive_influential"=model_additive_influential,
@@ -220,6 +231,15 @@ model_config<-list(
   "backward_aic_influential"=cached_step(model_additive_influential,direction = 'backward', trace = F),
   "backward_bic"=cached_step(model_additive,direction = 'backward', k = log(n), trace = F),
   "backward_bic_influential"=cached_step(model_additive_influential,direction = 'backward', k = log(n), trace = F)
+  
+
+  # "interaction"=model_interaction,
+  # "interaction_influential"=model_interaction_influential,
+  # "backward_aic_int"=cached_step(model_interaction,direction = 'backward', trace = T),
+  # "backward_aic_int_influential"=cached_step(model_interaction_influential,direction = 'backward', trace = F),
+  # "backward_bic_int"=cached_step(model_interaction,direction = 'backward', k = log(n), trace = F),
+  # "backward_bic_int_influential"=cached_step(model_interaction_influential,direction = 'backward', k = log(n), trace = F),
+  
 )
 
 
@@ -236,10 +256,13 @@ dfs<-lapply(names(model_config),function(model_name){
   # calculate the n of influential points 
   cookcount<-nrow(m$model[cooks.distance(m) > (4/length(cooks.distance(m))),])
   n_coefficients<-length(coef(m))-1
+  
+  my_rsme<-0 #ModelMetrics::rmse(train_data$SalePrice,exp(preds))
   df<-data.frame(model_name,paste0(mylabels,collapse = " + "),i,
-                 get_bp_decision(m),get_sw_decision(m),get_num_params(m),get_loocv_rmse(m),get_adj_r2(m),cookcount)
+                 get_bp_decision(m),get_sw_decision(m),get_num_params(m),my_rsme,get_adj_r2(m),cookcount)
   names(df)<-c("Model Name", "Model Vars","Model Number",
                "BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs")
+  
   
   
   
