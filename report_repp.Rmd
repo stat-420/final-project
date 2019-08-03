@@ -31,6 +31,7 @@ library(knitr)
 library(forcats)
 library(leaps)
 library(caret)
+library(corrplot)
 ```
 
 ## Data Preparation
@@ -140,12 +141,12 @@ Great, we've added `r length(features) - 79` new factor variables for a total of
 
 // TODO: explain this
 ```{r}
-cutoff = n * 0.05
+category_cutoff = n * 0.05
 for (f in features) {
   if (is.factor(train_data[[f]])) {
     for (category in levels(train_data[[f]])) {
       samples_in_cat = sum(na.omit(train_data[[f]]) == category)
-      if (samples_in_cat < cutoff) {
+      if (samples_in_cat < category_cutoff) {
         levels(train_data[[f]]) = c(levels(train_data[[f]]), other_category)
         train_data[[f]][train_data[[f]] == category] = other_category
       }
@@ -153,6 +154,7 @@ for (f in features) {
   }
 }
 
+feature_cutoff = n * 0.95
 for (f in features) {
   if (is.factor(train_data[[f]])) {
     if (length(levels(train_data[[f]])) == 1) {
@@ -160,13 +162,24 @@ for (f in features) {
     } else {
       for (category in levels(train_data[[f]])) {
         samples_in_cat = sum(na.omit(train_data[[f]]) == category)
-        if (samples_in_cat > n * 0.95) {
+        if (samples_in_cat > feature_cutoff) {
           train_data = train_data[,!(names(train_data) == f)]
         }
       }
     }
   }
 }
+```
+
+## Data Exploration
+
+Next we quiclky inspect the correlations between the numeric predictors in our dataset to determine which might be useful in predicting `SalePrice` and which might have collinearity issues:
+
+```{r fig.height=12, fig.width=14}
+numeric_variables <- train_data[which(sapply(train_data, is.numeric))]
+numeric_variables <- subset(numeric_variables, select = -c(Id))
+correlations <- cor(numeric_variables)
+corrplot(correlations, method="square", order ="FPC")
 ```
 
 ## Model Evaluation
@@ -193,19 +206,21 @@ get_log_rmse = function(observed, predicted) {
 get_cv_log_rmse = function(model_formula, folds = 5) {
   total_rmse = 0
   for (i in 1:folds) {
-    idx = sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.75, 0.25))
+    idx = sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.8, 0.2))
     training_set = train_data[idx,]
     cv_set = train_data[!idx,]
     model = train(model_formula, data=training_set, method="glm")
     cv_predicted = predict(model, newdata = cv_set)
-    total_rmse = total_rmse + get_log_rmse(cv_set$SalePrice, cv_predicted)
+    # For stability, ignore all predictions are < 1.0
+    nan_indices = is.nan(log(cv_predicted))
+    total_rmse = total_rmse + get_log_rmse(cv_set$SalePrice[!nan_indices], cv_predicted[!nan_indices])
   }
   total_rmse / folds
 }
 
 evaluate_model = function(model) {
   set.seed(42)
-  data.frame(Log.RMSE = get_cv_log_rmse(model$terms), 
+  data.frame(CV.Log.RMSE = get_cv_log_rmse(model$terms), 
              Adj.R2 = rsq(model, adj=TRUE),
              BIC = BIC(model),
              Params = length(coef(model)),
@@ -220,17 +235,32 @@ evaluate_model = function(model) {
 ### Baseline Models
 
 ```{r, warning=FALSE}
+# Start with a simple, naive model using all predictors added together 
 additive_large = lm(SalePrice ~ ., data = train_data)
 kable(evaluate_model(additive_large))
 ```
 
 ```{r, warning=FALSE}
+# Variables were selected based on the results of the Data Exploration section above
 additive_small = lm(SalePrice ~ 
                       LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
                       OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
                       Fireplaces + MSZoning + YearBuilt, data = train_data)
 kable(evaluate_model(additive_small))
 ```
+
+We can do much better on our target metric (CV.Log.RMSE) with the smaller model. Notice that the small additive model has far fewer parameters than the large one (`r length(coef(additive_small))` vs  `r length(coef(additive_large))`) It seems that with so many predictors, it's very easy to overfit to the training data. 
+
+### BIC Parameter Search
+
+The small baseline model also has a better BIC. So next, we'll use BIC to do a backwards parameter search starting from `additive_large` model.
+
+```{r, warning=FALSE}
+bic_backward = step(additive_large, k = log(n), direction = 'backward', trace = 0)
+kable(evaluate_model(bic_backward))
+```
+
+
 
 # Results
 
