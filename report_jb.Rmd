@@ -24,14 +24,25 @@ As a secondary goal, we'd like our model to be stable and interperatable so we w
 # Methods
 
 ```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
-library(boot)
-library(rsq)
-library(lmtest)
-library(knitr)
-library(forcats)
-library(leaps)
-library(caret)
-library(corrplot)
+# library(boot)
+# library(rsq)
+# library(lmtest)
+# library(knitr)
+# library(forcats)
+# library(leaps)
+# library(caret)
+# library(corrplot)
+
+checkDependencies<-function(){
+  GLOBAL_LIBS<-c('forcats','leaps','boot','data.table','rsq','fitdistrplus','e1071','knitr','kableExtra','corrplot','ggplot2','plyr','dplyr','devtools','caret','lmtest','mlbench')
+  # automatically install any missing packages
+  if (length(setdiff(GLOBAL_LIBS, rownames(installed.packages()))) > 0) {
+    install.packages(setdiff(GLOBAL_LIBS, rownames(installed.packages())))
+  }
+  invisible(lapply(GLOBAL_LIBS,require,character.only=TRUE))
+}
+
+checkDependencies()
 
 
 ##########################################################
