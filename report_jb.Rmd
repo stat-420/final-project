@@ -520,9 +520,16 @@ qqline(resid(best_model), col = 'dodgerblue', lwd = 2)
 
 # Discussion
 
+
+
+#### Challenges
+The dataset we chose was challenging for a variety of reasons, we think that because there are so many columns and so few rows we can easily run into overfitting - so perhaps in the future we would be able to expand the number of observations.
+We have also seen that some of the AIC/BIC/train functions may take extremely long times - so `caching` was added so that we would be able to perform iterative updates to the formatting and text.
+
+#### Future Work
+
+
 # Acknowledgments
 
-We would like to thank [Professor David Unger](https://stat.illinois.edu/directory/profile/dunger) for his input has been invaluable during the course and lecture hours. 
-
-Also [Professor David Dalpiaz](http://daviddalpiaz.github.io/appliedstats/) for the material covered in the course.
+We would like to thank [Professor David Unger](https://stat.illinois.edu/directory/profile/dunger) for his input has been invaluable during the course and lecture hours and also [Professor David Dalpiaz](http://daviddalpiaz.github.io/appliedstats/) for the material that was covered in the course.
 
