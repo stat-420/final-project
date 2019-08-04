@@ -24,23 +24,32 @@ As a secondary goal, we'd like our model to be stable and interperatable so we w
 # Methods
 
 ```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
-library(boot)
-library(rsq)
-library(lmtest)
-library(knitr)
-library(forcats)
-library(leaps)
-library(caret)
-library(corrplot)
+# library(boot)
+# library(rsq)
+# library(lmtest)
+# library(knitr)
+# library(forcats)
+# library(leaps)
+# library(caret)
+# library(corrplot)
+
+checkDependencies<-function(){
+  GLOBAL_LIBS<-c('forcats','leaps','boot','data.table','rsq','fitdistrplus','e1071','knitr','kableExtra','corrplot','ggplot2','plyr','dplyr','devtools','caret','lmtest','mlbench')
+  # automatically install any missing packages
+  if (length(setdiff(GLOBAL_LIBS, rownames(installed.packages()))) > 0) {
+    install.packages(setdiff(GLOBAL_LIBS, rownames(installed.packages())))
+  }
+  invisible(lapply(GLOBAL_LIBS,require,character.only=TRUE))
+}
+
+checkDependencies()
 
 
 ##########################################################
 #
 # Globals
 ##########################################################
-BASE_PATH <- "~/git/STAT420/final-project"
-DATA_DIR <- "data"
-CACHE_DIR <- "cache"
+CACHE_DIR <-  tempdir(check = FALSE)
 
 ##########################################################
 #
@@ -68,7 +77,7 @@ cached_lm<-function(formula, data, subset, weights, na.action, method = "qr",
   model_sha <- digest::digest(model_name,"sha1")
  
   # check if file exists
-  model_path <-file.path(BASE_PATH,CACHE_DIR,paste0(model_sha,".rds"))
+  model_path <-file.path(CACHE_DIR,paste0(model_sha,".rds"))
   # if it exists, return it ...
   if(file.exists(model_path) && !rebuild ){
     print(paste("[cache] loaded model from ", model_path))
@@ -98,11 +107,15 @@ cached_train <-function( model, data, method, ..., weights, subset, na.action, c
   
   # first we build a UUID for this model using all terms 
   model_name <- paste0(formula(model$terms),collapse = "")
+  
+  # data sha
+  data_sha <- digest::digest(data,"sha1")
   # add in model heuristics
-  model_name <- paste0(model_name,nrow(data))
+  model_name <- paste0(model_name,nrow(data),data_sha)
+
   # digest
   model_sha <- digest::digest(model_name,"sha1")
-  model_path <-file.path(BASE_PATH,CACHE_DIR,paste0(model_sha,".rds"))
+  model_path <-file.path(CACHE_DIR,paste0(model_sha,".rds"))
   if(file.exists(model_path) && !rebuild ){
     print(paste("[cache] loaded train model from ", model_path))
     return(readRDS(model_path))
@@ -131,11 +144,13 @@ cached_step <-function(object, scope, scale = 0, direction = c("both", "backward
   terms<-labels(object)
   # first we build a UUID for this model using all terms 
   model_name <- paste0(terms,collapse = "+")
+   # data sha
+  data_sha <- digest::digest(object$model,"sha1")
   # add in model heuristics
-  model_name <- paste0(model_name,nrow(object$model), length(coef(object)),as.character(direction) ,as.character(k))
+  model_name <- paste0(model_name,nrow(object$model),data_sha, length(coef(object)),as.character(direction) ,as.character(k))
   # digest
   model_sha <- digest::digest(model_name,"sha1")
-  model_path <-file.path(BASE_PATH,CACHE_DIR,paste0(model_sha,".rds"))
+  model_path <-file.path(CACHE_DIR,paste0(model_sha,".rds"))
   if(file.exists(model_path) && !rebuild ){
     print(paste("[cache] loaded step model from ", model_path))
     return(readRDS(model_path))
@@ -184,11 +199,10 @@ First, we load the training data and extract the number of samples and the featu
 
 ```{r}
 train_data = read.csv('data/train.csv')
-n = nrow(train_data)
 features = setdiff(colnames(train_data), c("Id", "SalePrice"))
 ```
 
-The housing dataset includes **`r length(features)` features** and **`r n` samples.**
+The housing dataset includes **`r length(features)` features** and **`r nrow(train_data)` samples.**
 
 ### Dealing with Missing Predictor Values
 Naturally, we expect that some examples are missing features, let's try removing those samples and see how much data we'd have left to work with:
@@ -214,7 +228,7 @@ train_data_omit_na = na.omit(train_data)
 nrow(train_data_omit_na)
 ```
 
-This appears to solve most of the problem, but we're still losing `r n - nrow(train_data_omit_na)` samples, since they have missing numeric feature values. Since they're a large portion (`r round((n*1.0 - nrow(train_data_omit_na)) / n * 100)`% of the dataset), we don't want to ignore them. Unfortunately, finding suitable replacement values for numeric features is more difficult.
+This appears to solve most of the problem, but we're still losing `r nrow(train_data) - nrow(train_data_omit_na)` samples, since they have missing numeric feature values. Since they're a large portion (`r round((nrow(train_data)*1.0 - nrow(train_data_omit_na)) / nrow(train_data) * 100)`% of the dataset), we don't want to ignore them. Unfortunately, finding suitable replacement values for numeric features is more difficult.
 
 Let's see which features have missing values:
 
@@ -230,7 +244,7 @@ For `MasVnrArea`, the masonry veneer area in square feet, we have a large number
 train_data$MasVnrArea[is.na(train_data$MasVnrArea)] = 0
 ```
 
-Since `GarageYrBlt` and `YearBuilt` are highly correlated (`r cor(train_data_omit_na$GarageYrBlt, train_data_omit_na$YearBuilt)`) and they're identical `r round(sum(train_data_omit_na$GarageYrBlt == train_data_omit_na$YearBuilt) / n * 100)`% of the time, we'll simply replace missing `GarageYrBlt` values with `YearBuilt` values.
+Since `GarageYrBlt` and `YearBuilt` are highly correlated (`r cor(train_data_omit_na$GarageYrBlt, train_data_omit_na$YearBuilt)`) and they're identical `r round(sum(train_data_omit_na$GarageYrBlt == train_data_omit_na$YearBuilt) / nrow(train_data) * 100)`% of the time, we'll simply replace missing `GarageYrBlt` values with `YearBuilt` values.
 
 ```{r}
 train_data$GarageYrBlt[is.na(train_data$GarageYrBlt)] = train_data$YearBuilt[is.na(train_data$GarageYrBlt)]
@@ -285,7 +299,7 @@ Great, we've added `r length(features) - 79` new factor variables for a total of
 
 // TODO: explain this
 ```{r}
-category_cutoff = n * 0.05
+category_cutoff = nrow(train_data) * 0.05
 for (f in features) {
   if (is.factor(train_data[[f]])) {
     for (category in levels(train_data[[f]])) {
@@ -298,7 +312,7 @@ for (f in features) {
   }
 }
 
-feature_cutoff = n * 0.95
+feature_cutoff = nrow(train_data) * 0.95
 for (f in features) {
   if (is.factor(train_data[[f]])) {
     if (length(levels(train_data[[f]])) == 1) {
@@ -361,12 +375,13 @@ get_log_rmse = function(observed, predicted) {
   sqrt(mean((log(predicted) - log(observed)) ^ 2))
 }
 
-get_cv_log_rmse = function(model_formula, folds = 5) {
+get_cv_log_rmse = function(model_formula, data, folds = 5) {
   total_rmse = 0
+  n = nrow(data)
   for (i in 1:folds) {
     idx = sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.8, 0.2))
-    training_set = train_data[idx,]
-    cv_set = train_data[!idx,]
+    training_set = data[idx,]
+    cv_set = data[!idx,]
     model = cached_train(model_formula, data=training_set, method="glm")
     cv_predicted = predict(model, newdata = cv_set)
     # For stability, ignore all predictions are < 1.0
@@ -376,10 +391,10 @@ get_cv_log_rmse = function(model_formula, folds = 5) {
   total_rmse / folds
 }
 
-evaluate_model = function(name, model) {
+evaluate_model = function(name, model, data) {
   set.seed(42)
   data.frame(Model = name,
-             CV.Log.RMSE = get_cv_log_rmse(model$terms), 
+             CV.Log.RMSE = get_cv_log_rmse(model_formula = model$terms,data =data), 
              Adj.R2 = rsq(model, adj=TRUE),
              BIC = BIC(model),
              Coefficients = length(coef(model)),
@@ -407,7 +422,7 @@ hist(log(train_data$SalePrice),main = "log(SalesPrice)")
 ```{r, warning=FALSE}
 # Start with a simple, naive model using all predictors added together 
 additive_large = lm(SalePrice ~ ., data = train_data)
-additive_large_eval = evaluate_model("Additive Large", additive_large)
+additive_large_eval = evaluate_model("Additive Large", additive_large, train_data)
 kable(additive_large_eval)
 ```
 
@@ -417,7 +432,7 @@ additive_small = lm(SalePrice ~
                       LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
                       OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
                       Fireplaces + MSZoning + YearBuilt, data = train_data)
-additive_small_eval = evaluate_model("Additive Small", additive_small)
+additive_small_eval = evaluate_model("Additive Small", additive_small,train_data)
 kable(additive_small_eval)
 ```
 
@@ -428,8 +443,8 @@ We can do much better on our target metric (CV.Log.RMSE) with the smaller model.
 The small baseline model also has a better BIC. So it looks like BIC might be a good metric to use to avoid overfitting. Next, we'll use BIC to do a backwards parameter search starting from `additive_large` model.
 
 ```{r, warning=FALSE}
-additive_bic_backward = cached_step(additive_large, k = log(n), direction = 'backward', trace = 0)
-additive_bic_backward_eval = evaluate_model("Additive Backward BIC", additive_bic_backward)
+additive_bic_backward = cached_step(additive_large, k = log(nrow(train_data)), direction = 'backward', trace = 0)
+additive_bic_backward_eval = evaluate_model("Additive Backward BIC", additive_bic_backward,train_data)
 kable(additive_bic_backward_eval)
 ```
 
@@ -481,8 +496,10 @@ pval_cols_used<-unique(merge(all_factor_column_names,pval_cols,by.x = "var",by.y
 pval_formula<-as.formula(paste("log(SalePrice)~", paste(pval_cols_used, collapse="+")))
 
 influential_indexes <- as.vector(which(cooks.distance(model_additive) > (4 / length(cooks.distance(model_additive)))))
+influential_indexes <- c(influential_indexes,as.vector(which(abs(resid(model_additive))>.5,0)))
 pval_model<-lm(pval_formula, data=new_train_data[-influential_indexes])
-pval_model_eval<-evaluate_model("pval",pval_model)
+pval_model_eval<-evaluate_model("pval",pval_model,new_train_data[-influential_indexes])
+
 p <- predict(pval_model, newdata = new_train_data[-influential_indexes])
 plot(exp(p), 
      new_train_data$SalePrice, 
@@ -514,12 +531,22 @@ plot(fitted(best_model), resid(best_model), col = 'grey',
 
 ```{r}
 # Q-Q Plot
-qqnorm(resid(best_model), main = "Normal Q-Q Plot", col = 'grey')
-qqline(resid(best_model), col = 'dodgerblue', lwd = 2)
+par(mfrow=(c(1,1)))
+qqnorm(resid(pval_model), main = "Normal Q-Q Plot", col = 'grey')
+qqline(resid(pval_model), col = 'dodgerblue', lwd = 2)
 ```
 
 # Discussion
 
+
+Lets summarize what we did, we started with a dataset with a number of invalid values and a large number of predictors. Then we started with the largest possible additive model and reduced number of predictors using backward selection and AIC. We tested resulting model for LINE assumptions for linear regression and found that those assumptions are violated.
+Then we derived another model using predictor and response tranformation and train it on a dataset that excludes infuential data points. We tested this new model for LINE assumptions and found it was in line with these assumptions, finally we used test dataset for prediction and calculated train and test RMSE. Of course this model is still not the best possible model but can be used for some prediction and can be further iproved by applying further transformations.
+The final selected model uses both numerical and categorical predictors. Some of the notable predictors that become part of selected model are overall quality, year bulit, ground living area, overall contidions, garage area,lot area etc.. Clearly these all play a major role for determining sales price of a home. So we can conclude that selected model is in line with the practical considerations of housing market.
+We also tried using interactive predictiors but with such a large number of categorial predictors, the number of predictors were going very high and keeping R studio busy for hours. 
+In future we would like to run R studio in more powerfull machine and explore areas of multithreaded processing to speed up training the model and submit result on Kaggle competition to see the result.
+
+
+We have spent many hours fitting various models, and most models did well with Adjusted-$$R^2$$ near 90% which means that most of them behave reasonable well - we would prefer models with less coefficients because they are easier to explain - however we noticed there is a balance between including too many coefficients that tend to overfit vs very few coefficients that are hard to explain.
 
 
 #### Challenges
