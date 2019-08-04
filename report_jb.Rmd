@@ -530,6 +530,12 @@ qqline(resid(pval_model), col = 'dodgerblue', lwd = 2)
 # Discussion
 
 
+Lets summarize what we did, we started with a dataset with a number of invalid values and a large number of predictors. Then we started with the largest possible additive model and reduced number of predictors using backward selection and AIC. We tested resulting model for LINE assumptions for linear regression and found that those assumptions are violated.
+Then we derived another model using predictor and response tranformation and train it on a dataset that excludes infuential data points. We tested this new model for LINE assumptions and found it was in line with these assumptions, finally we used test dataset for prediction and calculated train and test RMSE. Of course this model is still not the best possible model but can be used for some prediction and can be further iproved by applying further transformations.
+The final selected model uses both numerical and categorical predictors. Some of the notable predictors that become part of selected model are overall quality, year bulit, ground living area, overall contidions, garage area,lot area etc.. Clearly these all play a major role for determining sales price of a home. So we can conclude that selected model is in line with the practical considerations of housing market.
+We also tried using interactive predictiors but with such a large number of categorial predictors, the number of predictors were going very high and keeping R studio busy for hours. 
+In future we would like to run R studio in more powerfull machine and explore areas of multithreaded processing to speed up training the model and submit result on Kaggle competition to see the result.
+
 
 #### Challenges
 The dataset we chose was challenging for a variety of reasons, we think that because there are so many columns and so few rows we can easily run into overfitting - so perhaps in the future we would be able to expand the number of observations.
