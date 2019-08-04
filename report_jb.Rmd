@@ -49,7 +49,7 @@ checkDependencies()
 #
 # Globals
 ##########################################################
-CACHE_DIR <-  tempdir(check = FALSE)
+CACHE_DIR <-  tempdir(check = TRUE)
 
 ##########################################################
 #
