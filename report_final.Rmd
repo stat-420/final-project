@@ -1,0 +1,352 @@
+---
+title: "Housing Prices? How predictable!"
+date: 'Summer 2019'
+author: James Banasiak (jamesmb3), Ryan Epp (ryanepp2) and Nana Tark (ytark2)
+version: 0.0.4
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+urlcolor: cyan
+---
+
+***
+
+# Introduction
+In this data analysis project we explore the dataset from the *House Prices: Advanced Regression Techniques* competition held on [Kaggle](https://www.kaggle.com/c/house-prices-advanced-regression-techniques). The dataset describes residential homes in Ames, Iowa. The goal of is project (and the Kaggle competition) is to predict the sale price of a home based on it's other attributes. Theses attributes are represented in the dataset by an extensive 79 variables, including everything from the number of bathrooms, to the material the roof is made out of, to the year the home was built.
+
+Our primary goal is to build a model which can predict house prices as accurately as possible. We want our model to work well with previously unseen examples. So to avoid overfitting, we will use cross validation accuracy to evaluate our candidate models.
+
+As a secondary goal, we'd like our model to be stable and interperatable so we will also consider BIC, and Adjusted $R^2$ when selecting a best model.
+
+***
+
+# Methods
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+library(boot)
+library(rsq)
+library(lmtest)
+library(knitr)
+library(forcats)
+library(leaps)
+library(caret)
+library(corrplot)
+```
+
+## Data Preparation
+
+First, we load the training data and extract the number of samples and the feature names:
+
+```{r}
+train_data = read.csv('data/train.csv')
+n = nrow(train_data)
+features = setdiff(colnames(train_data), c("Id", "SalePrice"))
+```
+
+The housing dataset includes **`r length(features)` features** and **`r n` samples.**
+
+### Dealing with Missing Predictor Values
+Naturally, we expect that some examples are missing features, let's try removing those samples and see how much data we'd have left to work with:
+
+```{r}
+train_data_omit_na = na.omit(train_data)
+nrow(train_data_omit_na)
+```
+
+Bummer! It appears every sample has is missing at least one feature. So we can't simply omit them or we'll have nothing left to work with! For factor variables with missing values, we can simply create a new *`other`* category to fill in for *`NA`* values. 
+
+```{r}
+other_category = 'other'
+for (f in features) {
+  if (is.factor(train_data[[f]]) && any(is.na(train_data[[f]]))) {
+    levels(train_data[[f]]) = c(levels(train_data[[f]]), other_category)
+    train_data[[f]][is.na(train_data[[f]])] = other_category
+  }
+}
+
+# Try omitting samples with missing features again:
+train_data_omit_na = na.omit(train_data)
+nrow(train_data_omit_na)
+```
+
+This appears to solve most of the problem, but we're still losing `r n - nrow(train_data_omit_na)` samples, since they have missing numeric feature values. Since they're a large portion (`r round((n*1.0 - nrow(train_data_omit_na)) / n * 100)`% of the dataset), we don't want to ignore them. Unfortunately, finding suitable replacement values for numeric features is more difficult.
+
+Let's see which features have missing values:
+
+```{r}
+Filter(function (f) any(is.na(train_data[[f]])), features)
+```
+
+Great, we only need to deal with missing values for 3 numeric features. Let's  replace the *`NA`* values of these features with sensible defaults.
+
+For `MasVnrArea`, the masonry veneer area in square feet, we have a large number of examples with a value of 0, so that should be a decent replacement. Since it doesn't seem especially important, we might also consider dropping the feature entirely instead of the samples.
+
+```{r}
+train_data$MasVnrArea[is.na(train_data$MasVnrArea)] = 0
+```
+
+Since `GarageYrBlt` and `YearBuilt` are highly correlated (`r cor(train_data_omit_na$GarageYrBlt, train_data_omit_na$YearBuilt)`) and they're identical `r round(sum(train_data_omit_na$GarageYrBlt == train_data_omit_na$YearBuilt) / n * 100)`% of the time, we'll simply replace missing `GarageYrBlt` values with `YearBuilt` values.
+
+```{r}
+train_data$GarageYrBlt[is.na(train_data$GarageYrBlt)] = train_data$YearBuilt[is.na(train_data$GarageYrBlt)]
+```
+
+Coming up with replacement values for `LotFrontage` (linear feet of street connected to property) is much more difficult. It seems too important of a feature to simply remove. There are also no cases where the value is 0, and so no obvious replacement value.
+
+There are a few variables like `LotArea`, `LotShape` and `LotConfig` that seem like they might be predictive of `LotFrontage`. Let's quickly build a model to predict `LotFrontage` and then use it to fill in our missing values.
+
+```{r}
+lot_frontage_model = lm(LotFrontage ~ log(LotArea) + LotArea:LotConfig + LotShape + LandSlope + YearBuilt + BldgType, data = train_data_omit_na)
+```
+
+We can be confident the `lot_frontage_model` above is doing a good job predicting `LotFrontage` because: 
+
+* The p-value of the significance of regression test is extremely small.
+* The adjusted $R^2$ is fairly large: `r summary(lot_frontage_model)$adj.r.squared`
+* We're using a small number of predictors without higher degree polynomials so we aren't especially concerned with overfitting.
+
+If we wanted to be even more confident, we might check the cross validated RMSE, but because we're only using this model to fill in missing values, we won't spend too much time on it.
+
+Now we can fillin the missing `LotFrontage` values:
+
+```{r}
+train_data$LotFrontage[is.na(train_data$LotFrontage)] = predict(lot_frontage_model, newdata = train_data[is.na(train_data$LotFrontage),])
+
+# Check if there are any remaining NA values in the training data:
+any(is.na(train_data))
+```
+
+**Success!** We've managed to replace all of the missing values without losing any training samples.
+
+### Creating Additional Factor Variables
+
+When we loaded the dataset, R decided which predictors were numeric and which were factors. Some predictors that R considers numeric, might work better as factor variables. For example, the price difference between a 0 and a 2 car garage is likely different than the price difference between a 2 and a 4 car garage.
+
+```{r}
+for (f in features) {
+  # We'll add any numeric predictor with less than 12 unique values as a factor variable
+  if (!is.factor(train_data[[f]]) && length(unique(train_data[[f]])) <= 12) {
+    train_data[[paste(f, 'Fctr', sep = "")]] = as.factor(train_data[[f]])
+  }
+}
+
+# Update `features`:
+features = setdiff(colnames(train_data), c("Id", "SalePrice"))
+```
+
+Great, we've added `r length(features) - 79` new factor variables for a total of **`r length(features)` features**.
+
+### Removing Categories with Few Samples
+
+// TODO: explain this
+```{r}
+category_cutoff = n * 0.05
+for (f in features) {
+  if (is.factor(train_data[[f]])) {
+    for (category in levels(train_data[[f]])) {
+      samples_in_cat = sum(na.omit(train_data[[f]]) == category)
+      if (samples_in_cat < category_cutoff) {
+        levels(train_data[[f]]) = c(levels(train_data[[f]]), other_category)
+        train_data[[f]][train_data[[f]] == category] = other_category
+      }
+    }
+  }
+}
+
+feature_cutoff = n * 0.95
+for (f in features) {
+  if (is.factor(train_data[[f]])) {
+    if (length(levels(train_data[[f]])) == 1) {
+      train_data = train_data[,!(names(train_data) == f)]
+    } else {
+      for (category in levels(train_data[[f]])) {
+        samples_in_cat = sum(na.omit(train_data[[f]]) == category)
+        if (samples_in_cat > feature_cutoff) {
+          train_data = train_data[,!(names(train_data) == f)]
+        }
+      }
+    }
+  }
+}
+```
+
+## Data Exploration
+
+Next we quiclky inspect the correlations between the numeric predictors in our dataset to determine which might be useful in predicting `SalePrice` and which might have collinearity issues:
+
+```{r fig.height=12, fig.width=14}
+numeric_variables <- train_data[which(sapply(train_data, is.numeric))]
+numeric_variables <- subset(numeric_variables, select = -c(Id))
+correlations <- cor(numeric_variables)
+corrplot(correlations, method="square", order ="FPC")
+```
+
+Next we visualize the numeric predictors that are most correlated with `SalePrice`:
+
+```{r fig.height=12, fig.width=14}
+correlated_indices = abs(correlations['SalePrice',]) > 0.2
+correlated_predictors = names(correlations['SalePrice',correlated_indices])
+par(mfrow = c(ceiling(length(correlated_predictors) / 5.0), 5), mar=c(1,1,1,1), oma = c(0, 0, 3, 0))
+for (cor_pred in correlated_predictors) {
+  plot(train_data[[cor_pred]], train_data$SalePrice, 
+       main=cor_pred, col=rgb(0.1,0.1,0.1,0.3), pch=16, 
+       xaxt='n', yaxt='n', xlab = NA, ylab  = NA)
+}
+mtext("Predictors' Relationships to SalePrice", outer=TRUE, cex = 2)
+```
+
+We can see that our response variable `SalePrice` has a righ skew.  A log transform can be used to adjust and normalize the distribution. This will likely come in handy when building our models.
+
+```{r echo=T}
+par(mfrow=c(1,2))
+hist(train_data$SalePrice,main = "SalePrice", xlab = 'SalePrice')
+hist(log(train_data$SalePrice), main = "log(SalePrice)", xlab = 'log(SalePrice)')
+```
+
+Next we'll check wich other predictors might benefit from a 
+
+## Model Evaluation
+
+As an evaluation metric, the Kaggle competition uses Root-Mean-Squared-Error (RMSE) on the *logorithm of the predicted and actual sale prices*. Taking the logorithm ensures that expensive houses don't have more of an impact on RMSE than cheap houses.
+
+We'll use this same metric as our primary quality indicator. To ensure we don't overfit, we'll apply it on a 5-fold cross validation set. We'll also keep our eye on BIC, Adjusted $R^2$ and a few other metrics.
+
+```{r}
+get_bp_decision = function(model, alpha = 0.05) {
+  decide = unname(bptest(model)$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+get_shapiro_decision = function(model, alpha = 0.05) {
+  decide = unname(shapiro.test(resid(model))$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+get_log_rmse = function(observed, predicted) {
+  sqrt(mean((log(predicted) - log(observed)) ^ 2))
+}
+
+get_cv_log_rmse = function(model_formula, folds = 5, response_transform_func = I, data = train_data) {
+  total_rmse = 0
+  for (i in 1:folds) {
+    idx = sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.8, 0.2))
+    training_set = data[idx,]
+    cv_set = data[!idx,]
+    model = train(model_formula, data=training_set, method="glm")
+    cv_predicted = predict(model, newdata = cv_set)
+    # For stability, ignore all predictions are < 1.0
+    nan_indices = is.nan(log(cv_predicted))
+    cv_predicted = cv_predicted[!nan_indices]
+    cv_predicted = response_transform_func(cv_predicted)
+    total_rmse = total_rmse + get_log_rmse(cv_set$SalePrice[!nan_indices], cv_predicted)
+  }
+  total_rmse / folds
+}
+
+evaluate_model = function(name, model, response_transform_func = I, data = train_data) {
+  set.seed(42)
+  data.frame(Model = name,
+             CV.Log.RMSE = get_cv_log_rmse(model$terms, 
+                                           response_transform_func = response_transform_func,
+                                           data = data), 
+             Adj.R2 = rsq(model, adj=TRUE),
+             BIC = BIC(model),
+             Coefficients = length(coef(model)),
+             Shapiro.Decision = get_shapiro_decision(model),
+             BP.Decision = get_bp_decision(model)
+             )
+}
+```
+
+## Model Building
+
+### Baseline Models
+
+```{r, warning=FALSE}
+# Start with a simple, naive model using all predictors added together 
+additive_large = lm(SalePrice ~ ., data = train_data)
+additive_large_eval = evaluate_model("Additive Large", additive_large)
+kable(additive_large_eval)
+```
+
+```{r, warning=FALSE}
+# Variables were selected based on the results of the Data Exploration section above
+additive_small = lm(SalePrice ~ 
+                      LotArea + X1stFlrSF + X2ndFlrSF + MasVnrArea + BedroomAbvGr + OverallQual + 
+                      OverallCond  + ExterQual + KitchenQual + BsmtQual + BsmtExposure + ScreenPorch + 
+                      Fireplaces + MSZoning + YearBuilt, data = train_data)
+additive_small_eval = evaluate_model("Additive Small", additive_small)
+kable(additive_small_eval)
+```
+
+We can do much better on our target metric (CV.Log.RMSE) with the smaller model. Notice that the small additive model has far fewer parameters than the large one (`r length(coef(additive_small))` vs  `r length(coef(additive_large))`) It seems that with so many predictors, it's very easy to overfit to the training data. 
+
+### Parameter Search using BIC
+
+The small baseline model also has a better BIC. So it looks like BIC might be a good metric to use to avoid overfitting. Next, we'll use BIC to do a backwards parameter search starting from `additive_large` model.
+
+```{r, warning=FALSE}
+additive_bic_backward = step(additive_large, k = log(n), direction = 'backward', trace = 0)
+additive_bic_backward_eval = evaluate_model("Additive Backward BIC", additive_bic_backward)
+kable(additive_bic_backward_eval)
+```
+
+### Transformations
+Doing a parameter search using backwards BIC managed improve our results, but it still fails the Shapiro-Wilks and Breusch-Pagan tests. This suggests we might be able to achieve better results by applying some transformations to our the response and/or predictors.
+
+Based on the graphs in the *Data Exploration* section above, it appears that many predictors have an exponential or polynomial relationship with `SalePrice`. So it makes sense to try log transforming the response variable.
+
+```{r, warning=FALSE}
+log_response = lm(log(SalePrice) ~ ., data = train_data)
+# As before, we'll perfrom backwards BIC to remove excess predictors
+log_response_bic_backward = step(log_response, k = log(n), direction = 'backward', trace = 0)
+log_response_bic_backward_eval = evaluate_model("Log Response Backward BIC", log_response_bic_backward, response_transform_func = exp)
+kable(log_response_bic_backward_eval)
+```
+
+Note that because we've transformed the response variable, we can't compare BIC with the previous models. 
+
+Next we try transforming some of the predictors in addition to the response:
+
+```{r, warning=FALSE}
+# Modify some predictors that look like they'd benefit from a log transform to ensure stability
+modified_train_data = train_data
+modified_train_data$WoodDeckSF = modified_train_data$WoodDeckSF + 1
+modified_train_data$OpenPorchSF = modified_train_data$OpenPorchSF + 1
+
+pred_transform = lm(log(SalePrice) ~ . + I(OverallQual ^ 2) + I(YearBuilt ^ 2) + I(X1stFlrSF ^ 2) + I(X2ndFlrSF ^ 2) + I(GrLivArea ^ 2) + I(OverallCond ^ 2) + I(GarageArea ^ 2) + I(TotalBsmtSF ^ 2) + I(BsmtFinSF1 ^ 2) + log(LotArea) + I(LotFrontage ^ 2) + I(GarageYrBlt ^ 2) + log(WoodDeckSF) + log(OpenPorchSF), data = modified_train_data)
+# Perform backwards BIC to remove excess predictors
+pred_transform_backwards_bic = step(pred_transform, k = log(n), direction = 'backward', trace = 0)
+pred_transform_backwards_bic_eval = evaluate_model("Predictor Transforms", pred_transform_backwards_bic, response_transform_func = exp, data = modified_train_data)
+kable(pred_transform_backwards_bic_eval)
+```
+
+
+
+# Results
+
+```{r}
+model_results = rbind(additive_large_eval, additive_small_eval, additive_bic_backward_eval, log_response_bic_backward_eval, pred_transform_backwards_bic_eval)
+kable(model_results)
+```
+
+```{r}
+best_model = pred_transform_backwards_bic
+```
+
+```{r}
+# Fitted vs. Residuals Plot
+plot(fitted(best_model), resid(best_model), col = 'grey',
+     xlab = "Fitted", ylab = "Residuals", main = "Fitted vs. Residuals")
+    abline(h = 0, col = 'orange', lwd = 2)
+```
+
+```{r}
+# Q-Q Plot
+qqnorm(resid(best_model), main = "Normal Q-Q Plot", col = 'grey')
+qqline(resid(best_model), col = 'dodgerblue', lwd = 2)
+```
+
+# Discussion
+
