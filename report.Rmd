@@ -27,7 +27,7 @@ urlcolor: cyan
 
 
 checkDependencies<-function(){
-  GLOBAL_LIBS<-c('fitdistrplus','e1071','knitr','kableExtra','corrplot','ggplot2','plyr','dplyr','devtools','caret','lmtest','mlbench')
+  GLOBAL_LIBS<-c('data.table','rsq','fitdistrplus','e1071','knitr','kableExtra','corrplot','ggplot2','plyr','dplyr','devtools','caret','lmtest','mlbench')
   # automatically install any missing packages
   if (length(setdiff(GLOBAL_LIBS, rownames(installed.packages()))) > 0) {
     install.packages(setdiff(GLOBAL_LIBS, rownames(installed.packages())))
@@ -105,8 +105,13 @@ train_data <- as.data.frame(unclass(train_data))
 
 # Introduction
 
-We can see that 
+We can see that our response variable `SalePrice` has a righ skew.  A log transform can be used to adjust and normalize the distribution.
 
+```{r echo=T}
+par(mfrow=c(1,2))
+hist(train_data$SalePrice,main = "SalesPrice")
+hist(log(train_data$SalePrice),main = "log(SalesPrice)")
+```
 
 
 ```{r echo=T}
@@ -130,10 +135,13 @@ cached_lm<-function(formula, data, subset, weights, na.action, method = "qr",
   # first we build a UUID for this model using all terms 
   terms = attr(terms.formula(formula,  data = data), "term.labels")
   model_name <- paste0(terms,collapse = "+")
+  # data sha
+  data_sha <- digest::digest(data,"sha1")
   # add in model heuristics
-  model_name <- paste0(model_name,nrow(data))
+  model_name <- paste0(model_name,nrow(data),data_sha)
   # digest
   model_sha <- digest::digest(model_name,"sha1")
+ 
   # check if file exists
   model_path <-file.path(BASE_PATH,CACHE_DIR,paste0(model_sha,".rds"))
   # if it exists, return it ...
@@ -229,7 +237,7 @@ model_additive = cached_lm(log(SalePrice) ~ ., data = train_data)
 
 
 influential_indexes <- as.vector(which(cooks.distance(model_additive) > 4 / length(cooks.distance(model_additive))))
-model_additive_influential<-cached_lm(formula = log(SalePrice) ~ ., data=train_data[-influential_indexes,])
+model_additive_influential<-cached_lm(formula = log(SalePrice)+1 ~ ., data=train_data[-influential_indexes,])
 
 # model_interaction<-cached_lm(formula = log(SalePrice) ~ .^2, data=train_data)
 # model_interaction_influential<-cached_lm(formula = log(SalePrice) ~ .^2, data=train_data[-influential_indexes,])
@@ -242,7 +250,7 @@ model_additive_influential<-cached_lm(formula = log(SalePrice) ~ ., data=train_d
 model_config<-list(
   "additive"=model_additive,
   "additive_influential"=model_additive_influential,
-  "backward_aic"=cached_step(model_additive,direction = 'backward', trace = T),
+  "backward_aic"=cached_step(model_additive,direction = 'backward', trace = F),
   "backward_aic_influential"=cached_step(model_additive_influential,direction = 'backward', trace = F),
   "backward_bic"=cached_step(model_additive,direction = 'backward', k = log(n), trace = F),
   "backward_bic_influential"=cached_step(model_additive_influential,direction = 'backward', k = log(n), trace = F)
@@ -297,7 +305,7 @@ dfs<-lapply(names(model_config),function(model_name){
 resultDF <- data.table::rbindlist(dfs)
 # build html table 
 resultDF %>%
-  select("Model Name","Model Number","BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs") %>%
+  dplyr::select("Model Name","Model Number","BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs") %>%
   kable("html", escape = FALSE) %>%
   kable_styling("hover","striped", full_width = FALSE)
 
@@ -316,13 +324,243 @@ resultDF %>%
 
 
 ```{r fig.height=12, fig.width=14}
-numeric_variables <- train_data[which(sapply(train_data, is.numeric))]
-numeric_variables <- subset(numeric_variables, select = -c(Id))
-correlations <- cor(numeric_variables)
+par(mfrow=c(1,1))
+
+numeric_variables <- names(which(sapply(train_data, is.numeric)))
+categorical_variables <- setdiff(names(train_data),(numeric_variables))
+# remove Id
+numeric_variables <- numeric_variables[numeric_variables!= "Id"]
+numeric_variables_data <- subset(train_data[numeric_variables])
+correlations <- cor(numeric_variables_data)
 corrplot(correlations, method="square", order ="FPC")
 ```
 
 
+log transform all numeric variables
+```{r echo=F}
+par(mfrow=c(2,2))
+tmp<-sapply(numeric_variables,function(var){
+  hist(train_data[[var]],main = var)
+  hist(log(train_data[[var]]),main = paste0("log(",var,")"))
+})
+
+```
+
+
+
+Transform data 
+```{r echo=T}
+
+should_log_transform<-c('MSSubClass','LotArea','BsmtFinSF1','BsmtFinSF2','BsmtUnfSF','TotalBsmtSF','X1stFlrSF','X2ndFlrSF','LowQualFinSF','GrLivArea','BedroomAbvGr','TotRmsAbvGrd','GarageArea','WoodDeckSF','OpenPorchSF','EnclosedPorch','X3SsnPorch','ScreenPorch','PoolArea','MiscVal','MoSold')
+
+
+new_train<-train_data
+# drop columns 
+new_train<-new_train[,!grepl("Condition1",names(new_train))]
+new_train<-new_train[,!grepl("Condition2",names(new_train))]
+new_train<-new_train[,!grepl("Neighborhood",names(new_train))]
+new_train<-new_train[,!grepl("RoofMatl",names(new_train))]
+new_train<-new_train[,!grepl("LotFrontage",names(new_train))]
+new_train<-new_train[,!grepl("RoofStyle",names(new_train))]
+new_train<-new_train[,!grepl("Exterior1st",names(new_train))]
+new_train<-new_train[,!grepl("Exterior2nd",names(new_train))]
+new_train<-new_train[,!grepl("ExterCond",names(new_train))]
+new_train<-new_train[,!grepl("Heating",names(new_train))]
+
+
+# apply log transforms to predictors
+tmp<-sapply(should_log_transform,function(var){
+  new_train[[var]] <<- log(1+ new_train[[var]]  )
+})
+
+
+
+nacounts<-function(d){
+  # show na count per variable
+  na_count <-sapply(d, function(y) sum(length(which(is.na(y)))))
+  na_count <- data.frame(na_count)
+  return(na_count)
+}
+
+factorcounts<-function(d){
+  tmp<-sapply(names(d),function(x){
+   if (is.factor(d[[x]])){
+     print(length(levels(d[[x]])))
+   }
+  })
+}
+
+
+
+#Drop factor variables with less than 2 levels & keep non-factor vars
+clean_factors<-function(d){
+  names(train_data) <- make.names(names(train_data))
+  features <- setdiff(colnames(d), c("Id", "SalePrice"))
+  for (f in features) {
+    # find NA's 
+    if (any(is.na(d[[f]]))) 
+      # if its a char then use Other as a replacment
+      if (is.character(d[[f]])){ 
+        d[[f]][is.na(d[[f]])] <- "Others"
+      }else{
+        # otherwise its a number, use a suitable number other than NA
+        d[[f]][is.na(d[[f]])] <- -999  
+      }
+  }
+  return(d)
+}
+
+
+build_column_factor_map<-function(d){
+  vs<-list()
+  dfs<-lapply(names(d),function(x){
+   if (is.factor(d[[x]])){
+     dfs<-lapply(levels(d[[x]]),function(val){
+       var <- paste0(x,val)
+       return(data.frame(var=var,val=x))
+     })
+     return(data.table::rbindlist(dfs))
+     
+   }
+    else
+    {
+       return(data.frame(var=x,val=x))
+    }
+  })
+  return(data.table::rbindlist(dfs))
+}
+all_factor_column_names<-build_column_factor_map(d = new_train)
+
+
+new_train<-clean_factors(new_train)
+nacounts(new_train)
+
+
+model_additive = cached_lm(log(SalePrice) ~ . -Id-MSSubClass, data = new_train)
+pvals<-coef(summary(model_additive))[,"Pr(>|t|)"]
+# get pvals less than .001 and make a new formula
+pval_cols<-data.frame(var=names(pvals[pvals<0.0001]))
+pval_cols_used<-unique(merge(all_factor_column_names,pval_cols,by.x = "var",by.y = "var")$val)
+pval_formula<-as.formula(paste("log(SalePrice)~", paste(pval_cols_used, collapse="+")))
+pval_model<-lm(pval_formula, data=new_train)
+summary(pval_model)$adj
+evaluate_model(pval_model)
+
+
+p <- predict(pval_model, newdata = new_train)
+plot(exp(p), 
+     new_train$SalePrice, 
+     col = "dodgerblue", 
+     pch = 20,
+     main = "Prediction vs Actual",
+     xlab = "Prediction",
+     ylab = "Actual"
+     )
+
+
+
+influential_indexes <- as.vector(which(cooks.distance(model_additive) > 4 / length(cooks.distance(model_additive))))
+model_additive_influential<-cached_lm(formula = log(SalePrice) ~ ., data=new_train[-influential_indexes,])
+
+
+model_config<-list(
+  "additive"=model_additive,
+  "additive_influential"=model_additive_influential,
+  "backward_aic"=cached_step(model_additive,direction = 'backward', trace = F),
+  "backward_aic_influential"=cached_step(model_additive_influential,direction = 'backward', trace = F),
+  "backward_bic"=cached_step(model_additive,direction = 'backward', k = log(n), trace = F),
+  "backward_bic_influential"=cached_step(model_additive_influential,direction = 'backward', k = log(n), trace = F)
+  
+)
+
+
+i<-1
+# here we can iterate all models and show in table
+dfs<-lapply(names(model_config),function(model_name){
+  # model_name<-'additive_influential'
+  print(model_name)
+  m<-model_config[[model_name]]
+  mylabels<-paste0(labels(m),collapse = " + ") 
+  # store the bptest p value
+  bpval<-bptest(m)$p.value
+  # store the shapiro test p value
+  shapiroval<-shapiro.test(resid(m))$p.value
+  # calculate the n of influential points 
+  cookcount<-nrow(m$model[cooks.distance(m) > (4/length(cooks.distance(m))),])
+  n_coefficients<-length(coef(m))-1
+  if (grepl("influential",model_name)){
+      preds<-(predict(m,new_train[-influential_indexes,]))
+  }
+  else{
+    preds<-(predict(m,new_train))
+  }
+  my_rsme<-ModelMetrics::rmse(new_train$SalePrice,exp(preds))
+  
+  
+  df<-data.frame(model_name,paste0(mylabels,collapse = " + "),i,
+                 get_bp_decision(m),get_sw_decision(m),get_num_params(m),my_rsme,get_adj_r2(m),cookcount)
+  names(df)<-c("Model Name", "Model Vars","Model Number",
+               "BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs")
+  
+  
+  
+  i<<-i+1
+  return(df)
+})
+
+
+
+resultDF <- data.table::rbindlist(dfs)
+# build html table 
+resultDF %>%
+   dplyr::select("Model Name","Model Number","BP Test","Shapiro Test","Coefficients", "RSME", "Adjusted R2", "Influential Obs") %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling("hover","striped", full_width = FALSE)
+
+
+
+
+
+
+```
+
+
+```{r echo=T}
+
+
+
+find_bad_factors<-function(model,d){
+  actual_cols<-intersect(names(model$model),names(d))
+  tmp<-sapply(actual_cols,function(x){
+      if (is.factor(d[[x]])){
+        # x<-"HouseStyle"
+        datafactors<-levels(d[[x]])
+        modelfactors<-model$xlevels[[x]]
+        
+        if(length(datafactors) != length(modelfactors)){
+          print(paste0("Need to add factors to ",x))
+          print(setdiff(old,new))
+        }
+      
+      }
+     
+  })
+  #return(model)
+}
+
+
+
+
+
+set.seed (17)
+cross_validations = rep(0 ,5)
+degree1
+for (i in 1:5) {
+  cross_validations[i]=cv.glm(new_train ,model_additive ,K=2)$delta[1]
+}
+lines(degree,cross_validations,type="b",col="red")
+
+```
 
 # Notes about errors
 
