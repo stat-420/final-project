@@ -217,25 +217,29 @@ get_log_rmse = function(observed, predicted) {
   sqrt(mean((log(predicted) - log(observed)) ^ 2))
 }
 
-get_cv_log_rmse = function(model_formula, folds = 5) {
+get_cv_log_rmse = function(model_formula, folds = 5, response_transform_func = I, data = train_data) {
   total_rmse = 0
   for (i in 1:folds) {
     idx = sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.8, 0.2))
-    training_set = train_data[idx,]
-    cv_set = train_data[!idx,]
+    training_set = data[idx,]
+    cv_set = data[!idx,]
     model = train(model_formula, data=training_set, method="glm")
     cv_predicted = predict(model, newdata = cv_set)
     # For stability, ignore all predictions are < 1.0
     nan_indices = is.nan(log(cv_predicted))
-    total_rmse = total_rmse + get_log_rmse(cv_set$SalePrice[!nan_indices], cv_predicted[!nan_indices])
+    cv_predicted = cv_predicted[!nan_indices]
+    cv_predicted = response_transform_func(cv_predicted)
+    total_rmse = total_rmse + get_log_rmse(cv_set$SalePrice[!nan_indices], cv_predicted)
   }
   total_rmse / folds
 }
 
-evaluate_model = function(name, model) {
+evaluate_model = function(name, model, response_transform_func = I, data = train_data) {
   set.seed(42)
   data.frame(Model = name,
-             CV.Log.RMSE = get_cv_log_rmse(model$terms), 
+             CV.Log.RMSE = get_cv_log_rmse(model$terms, 
+                                           response_transform_func = response_transform_func,
+                                           data = data), 
              Adj.R2 = rsq(model, adj=TRUE),
              BIC = BIC(model),
              Coefficients = length(coef(model)),
@@ -281,19 +285,44 @@ kable(additive_bic_backward_eval)
 ### Transformations
 Doing a parameter search using backwards BIC managed improve our results, but it still fails the Shapiro-Wilks and Breusch-Pagan tests. This suggests we might be able to achieve better results by applying some transformations to our the response and/or predictors.
 
-Based on the graphs in the *Data Exploration* section above, it appears that many predictors have an exponential or polynomial relationship with `SalePrice`.
+Based on the graphs in the *Data Exploration* section above, it appears that many predictors have an exponential or polynomial relationship with `SalePrice`. So it makes sense to try log transforming the response variable.
 
-# TODO: log transform etc...
+```{r, warning=FALSE}
+log_response = lm(log(SalePrice) ~ ., data = train_data)
+# As before, we'll perfrom backwards BIC to remove excess predictors
+log_response_bic_backward = step(log_response, k = log(n), direction = 'backward', trace = 0)
+log_response_bic_backward_eval = evaluate_model("Log Response Backward BIC", log_response_bic_backward, response_transform_func = exp)
+kable(log_response_bic_backward_eval)
+```
+
+Note that because we've transformed the response variable, we can't compare BIC with the previous models. 
+
+Next we try transforming some of the predictors instead of the response:
+
+```{r, warning=FALSE}
+# Modify some predictors that look like they'd benefit from a log transform to ensure stability
+modified_train_data = train_data
+modified_train_data$WoodDeckSF = modified_train_data$WoodDeckSF + 1
+modified_train_data$OpenPorchSF = modified_train_data$OpenPorchSF + 1
+
+pred_transform = lm(SalePrice ~ . + I(OverallQual ^ 2) + I(YearBuilt ^ 2) + I(X1stFlrSF ^ 2) + I(X2ndFlrSF ^ 2) + I(GrLivArea ^ 2) + I(OverallCond ^ 2) + I(GarageArea ^ 2) + I(TotalBsmtSF ^ 2) + I(BsmtFinSF1 ^ 2) + log(LotArea) + I(LotFrontage ^ 2) + I(GarageYrBlt ^ 2) + log(WoodDeckSF) + log(OpenPorchSF), data = modified_train_data)
+# Perform backwards BIC to remove excess predictors
+pred_transform_backwards_bic = step(pred_transform, k = log(n), direction = 'backward', trace = 0)
+pred_transform_backwards_bic_eval = evaluate_model("Predictor Transforms", pred_transform_backwards_bic, data = modified_train_data)
+kable(pred_transform_backwards_bic_eval)
+```
+
+
 
 # Results
 
 ```{r}
-model_results = rbind(additive_large_eval, additive_small_eval, additive_bic_backward_eval)
+model_results = rbind(additive_large_eval, additive_small_eval, additive_bic_backward_eval, log_response_bic_backward_eval, pred_transform_backwards_bic_eval)
 kable(model_results)
 ```
 
 ```{r}
-best_model = additive_bic_backward # TODO: replace with model that's actually the best
+best_model = pred_transform_backwards_bic # TODO: replace with model that's actually the best
 ```
 
 ```{r}
