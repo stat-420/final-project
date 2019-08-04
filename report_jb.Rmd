@@ -85,7 +85,7 @@ CACHE_DIR <- getStaticTempDirectory()
 ##########################################################
 cached_lm<-function(formula, data, subset, weights, na.action, method = "qr", 
     model = TRUE, x = FALSE, y = FALSE, qr = TRUE, singular.ok = TRUE, 
-    contrasts = NULL, offset, rebuild= FALSE,  ...) 
+    contrasts = NULL, offset, rebuild= FALSE, trace=FALSE, ...) 
 {
   cl <- match.call()
   mf <- match.call(expand.dots = FALSE)
@@ -105,7 +105,9 @@ cached_lm<-function(formula, data, subset, weights, na.action, method = "qr",
   model_path <-file.path(CACHE_DIR,paste0(model_sha,".rds"))
   # if it exists, return it ...
   if(file.exists(model_path) && !rebuild ){
-    print(paste("[cache] loaded model from ", model_path))
+    if(trace){
+      print(paste("[cache] loaded model from ", model_path))
+    }
     m<-readRDS(model_path)
     return(m)
   }
@@ -127,7 +129,7 @@ cached_lm<-function(formula, data, subset, weights, na.action, method = "qr",
 #   TODO: can be improved with additional params.
 #   jamesmb3@illinois.edu
 ##########################################################
-cached_train <-function( model, data, method, ..., weights, subset, na.action, contrasts = NULL,rebuild=FALSE)
+cached_train <-function( model, data, method, ..., weights, subset, na.action, contrasts = NULL,rebuild=FALSE,trace=FALSE)
 {
   
   # first we build a UUID for this model using all terms 
@@ -142,7 +144,9 @@ cached_train <-function( model, data, method, ..., weights, subset, na.action, c
   model_sha <- digest::digest(model_name,"sha1")
   model_path <-file.path(CACHE_DIR,paste0(model_sha,".rds"))
   if(file.exists(model_path) && !rebuild ){
-    print(paste("[cache] loaded train model from ", model_path))
+    if(trace){
+      print(paste("[cache] loaded train model from ", model_path))
+    }
     return(readRDS(model_path))
   }
   else{
@@ -162,7 +166,7 @@ cached_train <-function( model, data, method, ..., weights, subset, na.action, c
 #   jamesmb3@illinois.edu
 ##########################################################
 cached_step <-function(object, scope, scale = 0, direction = c("both", "backward", 
-    "forward"), trace = 1, keep = NULL, steps = 1000, k = 2,  rebuild=FALSE,
+    "forward"), trace = FALSE, keep = NULL, steps = 1000, k = 2,  rebuild=FALSE,
     ...)
 {
   # build a uuid from the base model
@@ -177,7 +181,10 @@ cached_step <-function(object, scope, scale = 0, direction = c("both", "backward
   model_sha <- digest::digest(model_name,"sha1")
   model_path <-file.path(CACHE_DIR,paste0(model_sha,".rds"))
   if(file.exists(model_path) && !rebuild ){
-    print(paste("[cache] loaded step model from ", model_path))
+    if (trace){
+       print(paste("[cache] loaded step model from ", model_path))
+    }
+   
     return(readRDS(model_path))
   }
   else{
