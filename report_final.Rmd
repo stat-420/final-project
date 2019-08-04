@@ -394,6 +394,7 @@ kable(model_results)
 
 ```{r}
 best_model = poly_transform_backwards_bic
+summary(best_model)
 ```
 
 ```{r}
@@ -427,13 +428,25 @@ qqline(resid(best_model), col = 'dodgerblue', lwd = 2)
 # Discussion
 
 #### Summary of Work
+We started with a dataset with a number of missing values and a large number of predictors relative to the number of samples. We fixed the missing values and added some additional factor variables. Next we explored the data to help build intuition we used later when building models. 
+
+Then we started with the largest possible additive model and noticed that it was overfitting. We reduced the number of predictors using backward selection and BIC and saw an improvement. Then we derived a few additional models using different types of predictor and response tranformations, selecting parameters using backwards BIC as well as the p-values of individual predictor t-tests.
+
+We also tried using interactive predictiors but with such a large number of categorial predictors, we didn't have much luck. 
 
 #### Challenges
-The dataset we chose was challenging for a variety of reasons. Because there are so many predictors relative to the number of samples we can easily run into overfitting. So perhaps in the future we would be able to expand the number of observations.
+The dataset we chose was challenging for a variety of reasons. Because there are so many predictors relative to the number of samples we can easily run into overfitting. If we were able to get more observations we might be able to make use of more of the predictors and have an overall better model. There were also many missing values and useless categories that we needed to deal with.
+
 We have also seen that some of the BIC, train and step functions may take extremely long times - so `caching` was used during development so that we would be able to perform iterative updates to the formatting and text.
 
-#### Future Work
+#### Final Model
+In the end, the model that performed best was the **Log Response, Poly Predictors, Backwards BIC** model. The final selected model uses both numerical and categorical predictors which were selected using backwards BIC. We find that applying a log transformation to the response generally improves model performance. Additionally, applying polynomial transformations to several of the predictors improves model performance.
 
+You can tell from the *Prediction vs Observed* plot, the extremely high adjusted $R^2$ value and the low cross validated RMSE that the model is doing an excellent job at predicting home prices. It also uses a fairly small number of predictors (`r length(coef(best_model))`). We've acomplished what we set out to do: build a highly accurate model that's also interpretable.
+
+None of our models passed the Shapiro-Wilks or Breusch-Pagan tests. However, based on the *Fitted vs. Resuduals* plot, our final model appears to have fairly equal variance. On the other hand, based on the Q-Q plot, it clearly violates the normality assumption.
+
+Some of the notable predictors that become part of selected model are overall quality, year bulit, ground living area, overall contidion, and neighborhood among others. Clearly these all play a major role for determining sales price of a home. So we can conclude that selected model is in line with the practical considerations of housing market.
 
 # Acknowledgments
 
