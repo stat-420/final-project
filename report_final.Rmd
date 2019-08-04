@@ -32,6 +32,26 @@ library(forcats)
 library(leaps)
 library(caret)
 library(corrplot)
+
+# Builds a reverse crosswalk of variable+factor -> variable
+build_column_factor_map<-function(d){
+  vs<-list()
+  dfs<-lapply(names(d),function(x){
+   if (is.factor(d[[x]])){
+     dfs<-lapply(levels(d[[x]]),function(val){
+       var <- paste0(x,val)
+       return(data.frame(var=var,val=x))
+     })
+     return(data.table::rbindlist(dfs))
+     
+   }
+    else
+    {
+       return(data.frame(var=x,val=x))
+    }
+  })
+  return(data.table::rbindlist(dfs))
+}
 ```
 
 ## Data Preparation
@@ -78,7 +98,7 @@ Let's see which features have missing values:
 Filter(function (f) any(is.na(train_data[[f]])), features)
 ```
 
-Great, we only need to deal with missing values for 3 numeric features. Let's  replace the *`NA`* values of these features with sensible defaults.
+Great, we only need to deal with missing values for 3 numeric features. Let's replace the *`NA`* values of these features with sensible defaults.
 
 For `MasVnrArea`, the masonry veneer area in square feet, we have a large number of examples with a value of 0, so that should be a decent replacement. Since it doesn't seem especially important, we might also consider dropping the feature entirely instead of the samples.
 
@@ -139,8 +159,10 @@ Great, we've added `r length(features) - 79` new factor variables for a total of
 
 ### Removing Categories with Few Samples
 
-// TODO: explain this
+Some categorical variables have categories with very few samples. These cause issues in *R* when doing cross-validation because categories may exist in the cross-validation set that weren't in the training set and the training set may contain factors with only one category. Since they're a realatively small part of the data, it should be safe to just remove these categories along with predictors where most of the samples are in a single class.
+
 ```{r}
+# Remove categories that contain < 5% of the samples:
 category_cutoff = n * 0.05
 for (f in features) {
   if (is.factor(train_data[[f]])) {
@@ -154,6 +176,7 @@ for (f in features) {
   }
 }
 
+# Remove predictors where > 95% of the samples are in 1 category:
 feature_cutoff = n * 0.95
 for (f in features) {
   if (is.factor(train_data[[f]])) {
@@ -173,7 +196,30 @@ for (f in features) {
 
 ## Data Exploration
 
-Next we quiclky inspect the correlations between the numeric predictors in our dataset to determine which might be useful in predicting `SalePrice` and which might have collinearity issues:
+We want to better understand what our data looks like before we dive into model building.
+
+First we notice that our response variable `SalePrice` has a righ skew.  A log transform can be used to adjust and normalize the distribution. This will likely come in handy when building our models.
+
+```{r echo=T}
+par(mfrow=c(1,2))
+hist(train_data$SalePrice,main = "SalePrice", xlab = 'SalePrice')
+hist(log(train_data$SalePrice), main = "log(SalePrice)", xlab = 'log(SalePrice)')
+```
+
+We also check the distributions of the numeric predictors and note than many become more *normal* when a log transformation is applied.
+
+```{r fig.height=14, fig.width=14, warning=FALSE}
+numeric_var_count = length(which(sapply(train_data, is.numeric)))
+par(mfrow=c(ceiling(numeric_var_count*2 / 6),6), mar=c(1,2,1,2))
+for (f in features) {
+  if (is.numeric(train_data[[f]])) {
+    hist(train_data[[f]], main = f, xaxt='n', yaxt='n', xlab = NA, ylab  = NA, col = '#ffb38a')
+    hist(log(train_data[[f]]), main = paste0("log(",f,")"), xaxt='n', yaxt='n', xlab = NA, ylab  = NA, col = '#ff9248')
+  }
+}
+```
+
+We then quiclky inspect the correlations between the numeric predictors in our dataset to determine which might be useful in predicting `SalePrice` and which might have collinearity issues:
 
 ```{r fig.height=12, fig.width=14}
 numeric_variables <- train_data[which(sapply(train_data, is.numeric))]
@@ -196,16 +242,6 @@ for (cor_pred in correlated_predictors) {
 mtext("Predictors' Relationships to SalePrice", outer=TRUE, cex = 2)
 ```
 
-We can see that our response variable `SalePrice` has a righ skew.  A log transform can be used to adjust and normalize the distribution. This will likely come in handy when building our models.
-
-```{r echo=T}
-par(mfrow=c(1,2))
-hist(train_data$SalePrice,main = "SalePrice", xlab = 'SalePrice')
-hist(log(train_data$SalePrice), main = "log(SalePrice)", xlab = 'log(SalePrice)')
-```
-
-Next we'll check wich other predictors might benefit from a 
-
 ## Model Evaluation
 
 As an evaluation metric, the Kaggle competition uses Root-Mean-Squared-Error (RMSE) on the *logorithm of the predicted and actual sale prices*. Taking the logorithm ensures that expensive houses don't have more of an impact on RMSE than cheap houses.
@@ -213,12 +249,12 @@ As an evaluation metric, the Kaggle competition uses Root-Mean-Squared-Error (RM
 We'll use this same metric as our primary quality indicator. To ensure we don't overfit, we'll apply it on a 5-fold cross validation set. We'll also keep our eye on BIC, Adjusted $R^2$ and a few other metrics.
 
 ```{r}
-get_bp_decision = function(model, alpha = 0.05) {
+get_bp_decision = function(model, alpha = 0.01) {
   decide = unname(bptest(model)$p.value < alpha)
   ifelse(decide, "Reject", "Fail to Reject")
 }
 
-get_shapiro_decision = function(model, alpha = 0.05) {
+get_shapiro_decision = function(model, alpha = 0.01) {
   decide = unname(shapiro.test(resid(model))$p.value < alpha)
   ifelse(decide, "Reject", "Fail to Reject")
 }
@@ -295,7 +331,7 @@ kable(additive_bic_backward_eval)
 ### Transformations
 Doing a parameter search using backwards BIC managed improve our results, but it still fails the Shapiro-Wilks and Breusch-Pagan tests. This suggests we might be able to achieve better results by applying some transformations to our the response and/or predictors.
 
-Based on the graphs in the *Data Exploration* section above, it appears that many predictors have an exponential or polynomial relationship with `SalePrice`. So it makes sense to try log transforming the response variable.
+Based on the graphs in the *Data Exploration* section above, it appears that our model would benefit from log transforming `SalePrice`:
 
 ```{r, warning=FALSE}
 log_response = lm(log(SalePrice) ~ ., data = train_data)
@@ -307,7 +343,32 @@ kable(log_response_bic_backward_eval)
 
 Note that because we've transformed the response variable, we can't compare BIC with the previous models. 
 
-Next we try transforming some of the predictors in addition to the response:
+Next, we'll try log transforming some of the numeric predictors and and only using those that appear to be significant:
+
+```{r, warning=FALSE}
+should_log_transform = c('MSSubClass','LotArea','BsmtFinSF1','BsmtFinSF2','BsmtUnfSF','TotalBsmtSF','X1stFlrSF','X2ndFlrSF','LowQualFinSF','GrLivArea','BedroomAbvGr','TotRmsAbvGrd','GarageArea','WoodDeckSF','OpenPorchSF','EnclosedPorch','X3SsnPorch','ScreenPorch','PoolArea','MiscVal','MoSold')
+
+log_train_data = train_data
+tmp = sapply(should_log_transform, function(var){
+  log_train_data[[var]] <<- log(log_train_data[[var]] + 1)
+})
+
+# Fit a linear model with the new log-transformed data
+tmp_model = lm(log(SalePrice) ~ . - Id - MSSubClass, data = log_train_data)
+pvals = coef(summary(tmp_model))[,"Pr(>|t|)"]
+
+# Select predictors with pvals less than .001 and create a new formula
+significant_preds = data.frame(var = names(pvals[pvals<0.001]))
+all_factor_column_names = build_column_factor_map(d = log_train_data)
+pval_cols_used = unique(merge(all_factor_column_names, significant_preds, by.x = "var", by.y = "var")$val)
+log_pval_model_formula = as.formula(paste("log(SalePrice) ~ ", paste(pval_cols_used, collapse="+")))
+
+log_pval_model = lm(log_pval_model_formula, data = log_train_data)
+log_pval_model_eval = evaluate_model("Log Response and Predictors w/ P-value", log_pval_model, response_transform_func = exp, data = log_train_data)
+kable(log_pval_model_eval)
+```
+
+We'll also try adding some polynomial transformations to the predictors based on the graphs in the Data Exploration section. We'll also keep the log transform of the response:
 
 ```{r, warning=FALSE}
 # Modify some predictors that look like they'd benefit from a log transform to ensure stability
@@ -315,24 +376,37 @@ modified_train_data = train_data
 modified_train_data$WoodDeckSF = modified_train_data$WoodDeckSF + 1
 modified_train_data$OpenPorchSF = modified_train_data$OpenPorchSF + 1
 
-pred_transform = lm(log(SalePrice) ~ . + I(OverallQual ^ 2) + I(YearBuilt ^ 2) + I(X1stFlrSF ^ 2) + I(X2ndFlrSF ^ 2) + I(GrLivArea ^ 2) + I(OverallCond ^ 2) + I(GarageArea ^ 2) + I(TotalBsmtSF ^ 2) + I(BsmtFinSF1 ^ 2) + log(LotArea) + I(LotFrontage ^ 2) + I(GarageYrBlt ^ 2) + log(WoodDeckSF) + log(OpenPorchSF), data = modified_train_data)
+poly_transform = lm(log(SalePrice) ~ . + I(OverallQual ^ 2) + I(YearBuilt ^ 2) + I(X1stFlrSF ^ 2) + I(X2ndFlrSF ^ 2) + I(GrLivArea ^ 2) + I(OverallCond ^ 2) + I(GarageArea ^ 2) + I(TotalBsmtSF ^ 2) + I(BsmtFinSF1 ^ 2) + log(LotArea) + I(LotFrontage ^ 2) + I(GarageYrBlt ^ 2) + log(WoodDeckSF) + log(OpenPorchSF), data = modified_train_data)
 # Perform backwards BIC to remove excess predictors
-pred_transform_backwards_bic = step(pred_transform, k = log(n), direction = 'backward', trace = 0)
-pred_transform_backwards_bic_eval = evaluate_model("Predictor Transforms", pred_transform_backwards_bic, response_transform_func = exp, data = modified_train_data)
-kable(pred_transform_backwards_bic_eval)
+poly_transform_backwards_bic = step(poly_transform, k = log(n), direction = 'backward', trace = 0)
+poly_transform_backwards_bic_eval = evaluate_model("Log Response, Poly Predictors, Backwards BIC", poly_transform_backwards_bic, response_transform_func = exp, data = modified_train_data)
+kable(poly_transform_backwards_bic_eval)
 ```
 
-
+***
 
 # Results
 
 ```{r}
-model_results = rbind(additive_large_eval, additive_small_eval, additive_bic_backward_eval, log_response_bic_backward_eval, pred_transform_backwards_bic_eval)
+model_results = rbind(additive_large_eval, additive_small_eval, additive_bic_backward_eval, log_response_bic_backward_eval, log_pval_model_eval, poly_transform_backwards_bic_eval)
 kable(model_results)
 ```
 
 ```{r}
-best_model = pred_transform_backwards_bic
+best_model = poly_transform_backwards_bic
+```
+
+```{r}
+# Visualizing Predicted vs. Observed
+plot(exp(fitted(best_model)), 
+     train_data$SalePrice, 
+     col = "dodgerblue", 
+     pch = 20,
+     main = "Prediction vs Observed",
+     xlab = "Prediction",
+     ylab = "Observed"
+     )
+abline(0,1, col = 'grey')
 ```
 
 ```{r}
@@ -348,5 +422,21 @@ qqnorm(resid(best_model), main = "Normal Q-Q Plot", col = 'grey')
 qqline(resid(best_model), col = 'dodgerblue', lwd = 2)
 ```
 
+***
+
 # Discussion
 
+#### Summary of Work
+
+#### Challenges
+The dataset we chose was challenging for a variety of reasons. Because there are so many predictors relative to the number of samples we can easily run into overfitting. So perhaps in the future we would be able to expand the number of observations.
+We have also seen that some of the BIC, train and step functions may take extremely long times - so `caching` was used during development so that we would be able to perform iterative updates to the formatting and text.
+
+#### Future Work
+
+
+# Acknowledgments
+
+We would like to thank [Professor David Unger](https://stat.illinois.edu/directory/profile/dunger) for his input has been invaluable during the course and lecture hours and also [Professor David Dalpiaz](http://daviddalpiaz.github.io/appliedstats/) for the material that was covered in the course. 
+
+We'd also like to thank the incredible army of TAs that did an amazing job answering questions on Piazza and grading our assignments.
