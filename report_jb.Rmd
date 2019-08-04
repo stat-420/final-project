@@ -546,6 +546,9 @@ We also tried using interactive predictiors but with such a large number of cate
 In future we would like to run R studio in more powerfull machine and explore areas of multithreaded processing to speed up training the model and submit result on Kaggle competition to see the result.
 
 
+We have spent many hours fitting various models, and most models did well with Adjusted-$$R^2$$ near 90% which means that most of them behave reasonable well - we would prefer models with less coefficients because they are easier to explain - however we noticed there is a balance between including too many coefficients that tend to overfit vs very few coefficients that are hard to explain.
+
+
 #### Challenges
 The dataset we chose was challenging for a variety of reasons, we think that because there are so many columns and so few rows we can easily run into overfitting - so perhaps in the future we would be able to expand the number of observations.
 We have also seen that some of the AIC/BIC/train functions may take extremely long times - so `caching` was added so that we would be able to perform iterative updates to the formatting and text.
